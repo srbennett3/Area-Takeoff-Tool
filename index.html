@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Floorplan Space & Wall Analyzer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Define spaces on floorplans, set scale, compute areas, export to Excel" />
+  <link rel="stylesheet" href="styles.css" />
+  <!-- Fabric.js (no SRI for local dev) -->
+  <script src="https://cdn.jsdelivr.net/npm/fabric@5.3.0/dist/fabric.min.js"></script>
+  <!-- SheetJS (XLSX) -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+  <link rel="icon" href="data:," />
+</head>
+<body>
+  <div id="app-root" aria-label="Floorplan Analyzer App">
+    <header class="app-header">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">📐</span>
+        <h1>Floorplan Space & Wall Analyzer</h1>
+      </div>
+      <div class="header-actions">
+        <button id="btnExportExcel" class="primary" aria-label="Export to Excel">Export to Excel</button>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <aside class="sidebar" aria-label="Controls Sidebar">
+        <section class="panel" aria-labelledby="floor-mgmt-title">
+          <h2 id="floor-mgmt-title">Floors</h2>
+          <div class="form-row">
+            <label for="floorSelect">Active Floor</label>
+            <select id="floorSelect" aria-label="Select Active Floor"></select>
+          </div>
+          <div class="row-buttons">
+            <button id="btnAddFloor" aria-label="Add new floor">Add Floor</button>
+            <button id="btnDeleteFloor" class="danger" aria-label="Delete current floor">Delete</button>
+          </div>
+          <input id="fileFloorImage" type="file" accept="image/*" aria-label="Floorplan Image Upload" style="display:none" />
+        </section>
+
+        <section class="panel" aria-labelledby="drawing-tools-title">
+          <h2 id="drawing-tools-title">Drawing Tools</h2>
+          <div class="row-buttons">
+            <button id="btnDrawSpace" aria-label="Draw new space polygon">Draw New Space</button>
+            <button id="btnDeleteSpace" class="danger" aria-label="Delete selected space">Delete Space</button>
+          </div>
+          <div class="row-buttons">
+            <button id="btnScaleTool" aria-label="Draw or edit scale line">Scale Tool</button>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="scale-title">
+          <h2 id="scale-title">Scale</h2>
+          <div class="form-row">
+            <label for="scaleLength">Real Length</label>
+            <input id="scaleLength" type="number" step="0.0001" min="0" placeholder="e.g., 10" aria-label="Scale real-world length" />
+          </div>
+          <div class="form-row">
+            <label for="scaleUnit">Unit</label>
+            <select id="scaleUnit" aria-label="Scale unit">
+              <option value="feet">feet</option>
+              <option value="meters">meters</option>
+            </select>
+          </div>
+          <div class="hint">Use Scale Tool to draw the reference line.</div>
+        </section>
+
+        <section class="panel" aria-labelledby="space-props-title">
+          <h2 id="space-props-title">Space Properties</h2>
+          <div class="form-row">
+            <label for="spaceName">Room Name</label>
+            <input id="spaceName" type="text" placeholder="e.g., Living Room" aria-label="Space room name" />
+          </div>
+          <div class="form-row">
+            <label for="spaceCeiling">Avg Ceiling Height</label>
+            <input id="spaceCeiling" type="number" step="0.0001" min="0" placeholder="e.g., 8" aria-label="Average ceiling height" />
+          </div>
+          <div class="readonly-list">
+            <div><span class="label">Floor Area:</span> <span id="spaceArea">-</span></div>
+            <div><span class="label">Exterior Perimeter:</span> <span id="spaceExteriorPerim">-</span></div>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="edge-props-title">
+          <h2 id="edge-props-title">Edge (Wall) Properties</h2>
+          <div class="form-row">
+            <label for="edgeIsExterior">Is Exterior</label>
+            <input id="edgeIsExterior" type="checkbox" aria-label="Is exterior wall" />
+          </div>
+          <div class="form-row">
+            <label for="edgeHeight">Wall Height</label>
+            <input id="edgeHeight" type="number" step="0.0001" min="0" placeholder="e.g., 8" aria-label="Wall height" />
+          </div>
+          <div class="form-row">
+            <label for="edgeWinWidth">Total Window Width</label>
+            <input id="edgeWinWidth" type="number" step="0.0001" min="0" placeholder="e.g., 6" aria-label="Total window width" />
+          </div>
+          <div class="form-row">
+            <label for="edgeWinHeight">Total Window Height</label>
+            <input id="edgeWinHeight" type="number" step="0.0001" min="0" placeholder="e.g., 4" aria-label="Total window height" />
+          </div>
+          <div class="form-row">
+            <label for="edgeDirection">Direction</label>
+            <select id="edgeDirection" aria-label="Wall direction">
+              <option value="N">N</option>
+              <option value="NE">NE</option>
+              <option value="E">E</option>
+              <option value="SE">SE</option>
+              <option value="S">S</option>
+              <option value="SW">SW</option>
+              <option value="W">W</option>
+              <option value="NW">NW</option>
+            </select>
+          </div>
+          <div class="readonly-list">
+            <div><span class="label">Wall Length:</span> <span id="edgeLength">-</span></div>
+            <div><span class="label">Window Area:</span> <span id="edgeWindowArea">-</span></div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="canvas-wrap" aria-label="Canvas Area">
+        <div class="canvas-toolbar">
+          <span class="status" id="statusText" aria-live="polite">Ready</span>
+          <div class="legend" title="Selection colors">
+            <span class="swatch swatch-space" aria-label="Space color"></span><span>Space</span>
+            <span class="swatch swatch-space-selected" aria-label="Selected space color"></span><span>Selected Space</span>
+            <span class="swatch swatch-edge-selected" aria-label="Selected edge color"></span><span>Selected Edge</span>
+          </div>
+        </div>
+        <div class="canvas-holder">
+          <canvas id="floorCanvas" width="1200" height="800" aria-label="Floorplan Canvas"></canvas>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span>All data stored locally in your browser.</span>
+    </footer>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+<script>
+// Prevent touch scrolling from interfering with drawing on some devices
+document.addEventListener('touchmove', function(e){ if(e.target.closest('#floorCanvas')) e.preventDefault(); }, { passive: false });
+</script>
+</html>
+
