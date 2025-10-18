@@ -14,6 +14,11 @@
  */
 
 (function () {
+  if (typeof window.fabric === "undefined") {
+    const statusEl = document.getElementById("statusText");
+    if (statusEl) statusEl.textContent = "Error: Fabric.js failed to load. Check network/CDN.";
+    return;
+  }
   // --------------------------
   // Constants and helpers
   // --------------------------
@@ -43,7 +48,8 @@
     // Drawing
     btnDrawSpace: document.getElementById("btnDrawSpace"),
     btnDeleteSpace: document.getElementById("btnDeleteSpace"),
-    btnScaleTool: document.getElementById("btnScaleTool"),
+    btnScaleDraw: document.getElementById("btnScaleDraw"),
+    btnScaleToggle: document.getElementById("btnScaleToggle"),
 
     // Scale
     scaleLength: document.getElementById("scaleLength"),
@@ -54,6 +60,7 @@
     spaceCeiling: document.getElementById("spaceCeiling"),
     spaceArea: document.getElementById("spaceArea"),
     spaceExteriorPerim: document.getElementById("spaceExteriorPerim"),
+    spaceCeilingUnit: document.getElementById("spaceCeilingUnit"),
 
     // Edge props
     edgeIsExterior: document.getElementById("edgeIsExterior"),
@@ -63,6 +70,9 @@
     edgeDirection: document.getElementById("edgeDirection"),
     edgeLength: document.getElementById("edgeLength"),
     edgeWindowArea: document.getElementById("edgeWindowArea"),
+    edgeHeightUnit: document.getElementById("edgeHeightUnit"),
+    edgeWinWidthUnit: document.getElementById("edgeWinWidthUnit"),
+    edgeWinHeightUnit: document.getElementById("edgeWinHeightUnit"),
 
     // Export
     btnExportExcel: document.getElementById("btnExportExcel"),
@@ -101,6 +111,18 @@
     return Number(n.toFixed(digits)).toString();
   }
 
+  function isPointInPolygon(point, vertices) {
+    let inside = false;
+    for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+      const xi = vertices[i].x, yi = vertices[i].y;
+      const xj = vertices[j].x, yj = vertices[j].y;
+      const intersect = ((yi > point.y) !== (yj > point.y)) &&
+        (point.x < (xj - xi) * (point.y - yi) / ((yj - yi) || 1e-9) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
   // Shoelace area
   function polygonArea(pts) {
     let area = 0;
@@ -134,6 +156,7 @@
 
   let isDrawingScale = false;
   let tempScalePoints = []; // 0 or 1 or 2 points during scale draw
+  const SCALE_LINE_WIDTH = 8;
 
   // Selected objects
   let selectedSpaceId = null;
@@ -308,19 +331,29 @@
     keep.forEach(obj => canvas.remove(obj));
   }
 
+  function removeScaleVisuals() {
+    const toRemove = canvas.getObjects().filter(o => {
+      const t = o.get("fpType");
+      return t === "scaleLine" || t === "scaleLabel" || t === "scaleLabelLeader";
+    });
+    toRemove.forEach(o => canvas.remove(o));
+  }
+
   function drawScaleLineForFloor(floor) {
     if (!floor?.scale?.line) return;
+    const visible = floor.scale.visible !== false; // default visible
     const { x1, y1, x2, y2 } = floor.scale.line;
     const line = new fabric.Line([x1, y1, x2, y2], {
       stroke: "#f59e0b",
-      strokeWidth: 3,
+      strokeWidth: SCALE_LINE_WIDTH,
       selectable: false,
       evented: false,
-      hoverCursor: "default"
+      hoverCursor: "default",
+      visible
     });
     line.set("fpType", "scaleLine");
     canvas.add(line);
-    line.sendToBack();
+    line.bringToFront();
     canvas.renderAll();
   }
 
@@ -491,16 +524,13 @@
     isDrawingScale = true;
     tempScalePoints = [];
     setStatus("Scale: click two points to create reference line.");
-    // Make scale line selectable/editable if exists
-    canvas.getObjects().forEach(o => {
-      if (o.get("fpType") === "scaleLine") {
-        o.selectable = true;
-        o.evented = true;
-        o.hasControls = true;
-        o.lockMovementX = o.lockMovementY = false;
-        o.on("modified", onScaleLineModified);
-      }
-    });
+    const floor = activeFloor();
+    removeScaleVisuals();
+    if (floor?.scale) {
+      floor.scale.line = null;
+      floor.scale.visible = true;
+      saveState();
+    }
   }
 
   function cancelAllModes() {
@@ -530,7 +560,7 @@
     const space = {
       id: uid("space"),
       name: "Room",
-      ceilingHeight: 0,
+      ceilingHeight: null,
       vertices: tempDrawPoints.map(p => ({ x: p.x, y: p.y })),
       edges: [], // will be ensured
       area: 0,
@@ -620,24 +650,15 @@
     if (isDrawingScale) {
       tempScalePoints.push({ x: pointer.x, y: pointer.y });
       if (tempScalePoints.length === 2) {
-        // Create scale line
+        // Compute scale from the two clicked points and override any existing scale line
         const [p1, p2] = tempScalePoints;
-        const line = new fabric.Line([p1.x, p1.y, p2.x, p2.y], {
-          stroke: "#f59e0b",
-          strokeWidth: 3,
-          selectable: true,
-          hasControls: true,
-        });
-        line.set("fpType", "scaleLine");
-        canvas.add(line);
         tempScalePoints = [];
-
-        // Update floor scale pixel length and line
         const pixelLen = distance(p1, p2);
         floor.scale = floor.scale || { realLen: 0, pixelLen: 0, unit: dom.scaleUnit.value, line: null };
         floor.scale.pixelLen = pixelLen;
         floor.scale.unit = dom.scaleUnit.value;
         floor.scale.line = { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y };
+        floor.scale.visible = true;
         // Ask user to enter realLen if blank
         if (!floor.scale.realLen || floor.scale.realLen <= 0) {
           const entered = window.prompt("Enter real-world length for the drawn scale (in selected unit):", "10");
@@ -648,8 +669,12 @@
           }
         }
         saveState();
+        recalcAllSpacesForFloor(floor);
+        // Draw visuals
+        drawScaleLineForFloor(floor);
+        updateScaleToggleLabel();
         cancelAllModes();
-        setStatus("Scale set. You can edit the length/unit in the Scale panel.");
+        setStatus("Scale set. Reference line shown.");
         canvas.renderAll();
         return;
       }
@@ -674,6 +699,27 @@
         }
       }
     }
+
+    // If click is not inside any space polygon, deselect all
+    const f = activeFloor();
+    if (f && Array.isArray(f.spaces)) {
+      let insideAny = false;
+      for (const sp of f.spaces) {
+        if (isPointInPolygon(pointer, sp.vertices)) { insideAny = true; break; }
+      }
+      if (!insideAny) {
+        canvas.discardActiveObject();
+        onCanvasSelectionCleared();
+        // Reset fills to default
+        canvas.getObjects().forEach(o => {
+          if (o.get("fpType") === "space") {
+            o.set("fill", COLOR_SPACE);
+            o.set("stroke", COLOR_SPACE_STROKE);
+          }
+        });
+        canvas.renderAll();
+      }
+    }
   }
 
   function onCanvasSelectionCreated(e) {
@@ -695,6 +741,8 @@
     clearEdgeHighlight();
     updateSpacePanel();
     updateEdgePanelFromSelection();
+    setSpaceInputsEnabled(false);
+    setEdgeInputsEnabled(false);
   }
 
   function findClosestEdgeIndex(points, clickPoint, tolerancePx) {
@@ -737,15 +785,31 @@
     }
   }
 
+  function setSpaceInputsEnabled(enabled) {
+    dom.spaceName.disabled = !enabled;
+    dom.spaceCeiling.disabled = !enabled;
+  }
+
+  function setEdgeInputsEnabled(enabled) {
+    dom.edgeIsExterior.disabled = !enabled;
+    dom.edgeHeight.disabled = !enabled;
+    dom.edgeWinWidth.disabled = !enabled;
+    dom.edgeWinHeight.disabled = !enabled;
+    dom.edgeDirection.disabled = !enabled;
+  }
+
   function selectSpaceByPolygon(poly) {
     const sid = poly.get("spaceId");
     selectSpace(sid);
   }
 
   function selectSpace(spaceId) {
+    const changedSpace = selectedSpaceId !== spaceId;
     selectedSpaceId = spaceId;
-    selectedEdgeIndex = null;
-    clearEdgeHighlight();
+    if (changedSpace) {
+      selectedEdgeIndex = null;
+      clearEdgeHighlight();
+    }
     // Update fills
     canvas.getObjects().forEach(o => {
       if (o.get("fpType") === "space") {
@@ -765,6 +829,8 @@
     const space = floor?.spaces.find(s => s.id === spaceId);
     updateSpacePanel(space);
     updateEdgePanelFromSelection();
+    setSpaceInputsEnabled(!!space);
+    setEdgeInputsEnabled(false);
   }
 
   // --------------------------
@@ -811,6 +877,7 @@
       dom.edgeDirection.value = "N";
       dom.edgeLength.textContent = "-";
       dom.edgeWindowArea.textContent = "-";
+      setEdgeInputsEnabled(false);
       return;
     }
     const space = floor.spaces.find(s => s.id === selectedSpaceId);
@@ -823,6 +890,7 @@
     dom.edgeDirection.value = edge.direction || "N";
     dom.edgeLength.textContent = formatWithUnit(edge.length, false);
     dom.edgeWindowArea.textContent = formatWithUnit(edge.winArea, true);
+    setEdgeInputsEnabled(true);
   }
 
   function formatWithUnit(value, isArea) {
@@ -830,6 +898,14 @@
     const unit = floor?.scale?.unit || "feet";
     const suffix = isArea ? ` ${unit}²` : ` ${unit}`;
     return isFinite(value) && value > 0 ? `${toFixedSmart(value)}${suffix}` : "-";
+  }
+
+  function updateUnitSuffixes() {
+    const unit = activeFloor()?.scale?.unit || "feet";
+    if (dom.spaceCeilingUnit) dom.spaceCeilingUnit.textContent = unit;
+    if (dom.edgeHeightUnit) dom.edgeHeightUnit.textContent = unit;
+    if (dom.edgeWinWidthUnit) dom.edgeWinWidthUnit.textContent = unit;
+    if (dom.edgeWinHeightUnit) dom.edgeWinHeightUnit.textContent = unit;
   }
 
   // --------------------------
@@ -893,7 +969,7 @@
       name,
       imageSrc,
       backgroundFit: null,
-      scale: { realLen: 0, pixelLen: 0, unit: dom.scaleUnit.value, line: null },
+      scale: { realLen: 0, pixelLen: 0, unit: dom.scaleUnit.value, line: null, visible: true },
       spaces: [],
     };
     AppState.floors.push(floor);
@@ -908,6 +984,8 @@
     await setBackgroundFromFloor(floor);
     refreshAllPolygonsForFloor(floor);
     setScaleInputsFromFloor(floor);
+    updateScaleToggleLabel();
+    updateUnitSuffixes();
     selectedSpaceId = null;
     selectedEdgeIndex = null;
     setStatus(`Loaded floor "${floor.name}".`);
@@ -1069,6 +1147,7 @@
     floor.scale.unit = dom.scaleUnit.value;
     saveState();
     updatePanelsIfSelectionActive();
+    updateUnitSuffixes();
     setStatus("Scale unit updated.");
   });
 
@@ -1095,6 +1174,16 @@
     saveState();
   });
 
+  dom.spaceCeiling.addEventListener("input", () => {
+    if (!selectedSpaceId) return;
+    const floor = activeFloor();
+    const space = floor?.spaces.find(s => s.id === selectedSpaceId);
+    if (!space) return;
+    const val = parseFloat(dom.spaceCeiling.value);
+    space.ceilingHeight = isFinite(val) && val >= 0 ? val : 0;
+    saveState();
+  });
+
   dom.edgeIsExterior.addEventListener("change", () => {
     const edge = getSelectedEdge();
     if (!edge) return;
@@ -1114,6 +1203,15 @@
     recalcSelectedSpaceAndRefresh();
   });
 
+  // Live updates while typing
+  dom.edgeHeight.addEventListener("input", () => {
+    const edge = getSelectedEdge();
+    if (!edge) return;
+    const val = parseFloat(dom.edgeHeight.value);
+    edge.height = isFinite(val) && val >= 0 ? val : 0;
+    recalcSelectedSpaceAndRefresh();
+  });
+
   dom.edgeWinWidth.addEventListener("change", () => {
     const edge = getSelectedEdge();
     if (!edge) return;
@@ -1126,6 +1224,14 @@
     recalcSelectedSpaceAndRefresh();
   });
 
+  dom.edgeWinWidth.addEventListener("input", () => {
+    const edge = getSelectedEdge();
+    if (!edge) return;
+    const val = parseFloat(dom.edgeWinWidth.value);
+    edge.winWidth = isFinite(val) && val >= 0 ? val : 0;
+    recalcSelectedSpaceAndRefresh();
+  });
+
   dom.edgeWinHeight.addEventListener("change", () => {
     const edge = getSelectedEdge();
     if (!edge) return;
@@ -1135,6 +1241,14 @@
       return;
     }
     edge.winHeight = val;
+    recalcSelectedSpaceAndRefresh();
+  });
+
+  dom.edgeWinHeight.addEventListener("input", () => {
+    const edge = getSelectedEdge();
+    if (!edge) return;
+    const val = parseFloat(dom.edgeWinHeight.value);
+    edge.winHeight = isFinite(val) && val >= 0 ? val : 0;
     recalcSelectedSpaceAndRefresh();
   });
 
@@ -1177,14 +1291,47 @@
     enterDrawSpaceMode();
   });
 
-  dom.btnScaleTool.addEventListener("click", () => {
+  if (dom.btnScaleDraw) {
+    dom.btnScaleDraw.addEventListener("click", () => {
+      const floor = activeFloor();
+      if (!floor) {
+        alert("Add a floor first.");
+        return;
+      }
+      enterScaleMode();
+    });
+  }
+
+  function updateScaleToggleLabel() {
     const floor = activeFloor();
-    if (!floor) {
-      alert("Add a floor first.");
-      return;
-    }
-    enterScaleMode();
-  });
+    if (!dom.btnScaleToggle || !floor) return;
+    const isVisible = floor.scale?.visible !== false && !!floor.scale?.line;
+    dom.btnScaleToggle.textContent = isVisible ? "Hide Scale" : "Show Scale";
+  }
+
+  if (dom.btnScaleToggle) {
+    dom.btnScaleToggle.addEventListener("click", () => {
+      const floor = activeFloor();
+      if (!floor) {
+        alert("Add a floor first.");
+        return;
+      }
+      if (!floor.scale?.line) {
+        alert("No scale line to show or hide. Use Draw Scale first.");
+        return;
+      }
+      const newVisible = !(floor.scale.visible !== false);
+      floor.scale.visible = newVisible;
+      // Toggle visibility of existing visuals or redraw
+      removeScaleVisuals();
+      if (newVisible) {
+        drawScaleLineForFloor(floor);
+      }
+      updateScaleToggleLabel();
+      saveState();
+      canvas.renderAll();
+    });
+  }
 
   dom.btnDeleteSpace.addEventListener("click", () => {
     deleteSelectedSpace();
@@ -1234,6 +1381,15 @@
   canvas.on("selection:updated", onCanvasSelectionUpdated);
   canvas.on("selection:cleared", onCanvasSelectionCleared);
 
+  // Deselect when clicking empty background within the canvas area (but not outside app)
+  canvas.on("mouse:down", function(opt) {
+    if (isDrawingSpace || isDrawingScale) return;
+    if (opt.target) return; // clicking on object
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+    onCanvasSelectionCleared();
+  });
+
   // --------------------------
   // Initialization
   // --------------------------
@@ -1250,6 +1406,9 @@
     } else {
       setStatus("Add a floor to begin.");
     }
+    // Disable inputs until a selection is made
+    setSpaceInputsEnabled(false);
+    setEdgeInputsEnabled(false);
   }
 
   init();

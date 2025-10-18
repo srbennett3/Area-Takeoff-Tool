@@ -120,6 +120,40 @@ html, body {
   outline: none;
 }
 
+/* Disabled state visuals */
+input:disabled,
+select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Remove arrows from number inputs */
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Input with unit suffix */
+.input-with-unit {
+  position: relative;
+}
+.input-with-unit input {
+  padding-right: 44px;
+}
+.input-with-unit .unit-suffix {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+
 .form-row input[type="checkbox"] {
   justify-self: start;
   transform: scale(1.1);

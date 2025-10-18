@@ -45,16 +45,17 @@
             <button id="btnDrawSpace" aria-label="Draw new space polygon">Draw New Space</button>
             <button id="btnDeleteSpace" class="danger" aria-label="Delete selected space">Delete Space</button>
           </div>
-          <div class="row-buttons">
-            <button id="btnScaleTool" aria-label="Draw or edit scale line">Scale Tool</button>
-          </div>
         </section>
 
         <section class="panel" aria-labelledby="scale-title">
           <h2 id="scale-title">Scale</h2>
+          <div class="row-buttons">
+            <button id="btnScaleDraw" aria-label="Draw new scale reference line">Draw Scale</button>
+            <button id="btnScaleToggle" aria-label="Show or hide current scale line">Hide Scale</button>
+          </div>
           <div class="form-row">
             <label for="scaleLength">Real Length</label>
-            <input id="scaleLength" type="number" step="0.0001" min="0" placeholder="e.g., 10" aria-label="Scale real-world length" />
+            <input id="scaleLength" type="number" step="0.0001" min="0" aria-label="Scale real-world length" />
           </div>
           <div class="form-row">
             <label for="scaleUnit">Unit</label>
@@ -70,11 +71,14 @@
           <h2 id="space-props-title">Space Properties</h2>
           <div class="form-row">
             <label for="spaceName">Room Name</label>
-            <input id="spaceName" type="text" placeholder="e.g., Living Room" aria-label="Space room name" />
+            <input id="spaceName" type="text" aria-label="Space room name" disabled />
           </div>
           <div class="form-row">
             <label for="spaceCeiling">Avg Ceiling Height</label>
-            <input id="spaceCeiling" type="number" step="0.0001" min="0" placeholder="e.g., 8" aria-label="Average ceiling height" />
+            <div class="input-with-unit">
+              <input id="spaceCeiling" type="number" step="0.0001" min="0" aria-label="Average ceiling height" disabled />
+              <span id="spaceCeilingUnit" class="unit-suffix">feet</span>
+            </div>
           </div>
           <div class="readonly-list">
             <div><span class="label">Floor Area:</span> <span id="spaceArea">-</span></div>
@@ -86,23 +90,32 @@
           <h2 id="edge-props-title">Edge (Wall) Properties</h2>
           <div class="form-row">
             <label for="edgeIsExterior">Is Exterior</label>
-            <input id="edgeIsExterior" type="checkbox" aria-label="Is exterior wall" />
+            <input id="edgeIsExterior" type="checkbox" aria-label="Is exterior wall" disabled />
           </div>
           <div class="form-row">
             <label for="edgeHeight">Wall Height</label>
-            <input id="edgeHeight" type="number" step="0.0001" min="0" placeholder="e.g., 8" aria-label="Wall height" />
+            <div class="input-with-unit">
+              <input id="edgeHeight" type="number" step="0.0001" min="0" aria-label="Wall height" disabled />
+              <span id="edgeHeightUnit" class="unit-suffix">feet</span>
+            </div>
           </div>
           <div class="form-row">
             <label for="edgeWinWidth">Total Window Width</label>
-            <input id="edgeWinWidth" type="number" step="0.0001" min="0" placeholder="e.g., 6" aria-label="Total window width" />
+            <div class="input-with-unit">
+              <input id="edgeWinWidth" type="number" step="0.0001" min="0" aria-label="Total window width" disabled />
+              <span id="edgeWinWidthUnit" class="unit-suffix">feet</span>
+            </div>
           </div>
           <div class="form-row">
             <label for="edgeWinHeight">Total Window Height</label>
-            <input id="edgeWinHeight" type="number" step="0.0001" min="0" placeholder="e.g., 4" aria-label="Total window height" />
+            <div class="input-with-unit">
+              <input id="edgeWinHeight" type="number" step="0.0001" min="0" aria-label="Total window height" disabled />
+              <span id="edgeWinHeightUnit" class="unit-suffix">feet</span>
+            </div>
           </div>
           <div class="form-row">
             <label for="edgeDirection">Direction</label>
-            <select id="edgeDirection" aria-label="Wall direction">
+            <select id="edgeDirection" aria-label="Wall direction" disabled>
               <option value="N">N</option>
               <option value="NE">NE</option>
               <option value="E">E</option>
@@ -130,7 +143,7 @@
           </div>
         </div>
         <div class="canvas-holder">
-          <canvas id="floorCanvas" width="1200" height="800" aria-label="Floorplan Canvas"></canvas>
+          <canvas id="floorCanvas" width="1200" height="800" aria-label="Floorplan Canvas" tabindex="0"></canvas>
         </div>
       </section>
     </main>
@@ -140,11 +153,11 @@
     </footer>
   </div>
 
+  <script>
+  // Prevent touch scrolling from interfering with drawing on some devices
+  document.addEventListener('touchmove', function(e){ if(e.target.closest('#floorCanvas')) e.preventDefault(); }, { passive: false });
+  </script>
   <script src="app.js"></script>
 </body>
-<script>
-// Prevent touch scrolling from interfering with drawing on some devices
-document.addEventListener('touchmove', function(e){ if(e.target.closest('#floorCanvas')) e.preventDefault(); }, { passive: false });
-</script>
 </html>
 
