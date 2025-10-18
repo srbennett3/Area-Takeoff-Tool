@@ -462,45 +462,43 @@
   function actionHandler(eventData, transform, x, y) {
     const polygon = transform.target;
     const currentControl = polygon.controls[polygon.__corner];
-    const mouseLocalPosition = polygon.toLocalPoint(
-      new fabric.Point(x, y),
-      "center",
-      "center"
-    );
-    const polygonBaseSize = polygon._getNonTransformedDimensions();
-    const size = polygon._getTransformedDimensions(0, 0);
-    const finalPointPosition = {
-      x:
-        (mouseLocalPosition.x * polygonBaseSize.x) / size.x +
-        polygon.pathOffset.x,
-      y:
-        (mouseLocalPosition.y * polygonBaseSize.y) / size.y +
-        polygon.pathOffset.y,
+    // Convert mouse to polygon-local coordinates relative to pathOffset
+    const local = polygon.toLocalPoint(new fabric.Point(x, y), 'left', 'top');
+    const finalPoint = {
+      x: local.x + polygon.pathOffset.x,
+      y: local.y + polygon.pathOffset.y,
     };
-    polygon.points[currentControl.pointIndex] = finalPointPosition;
+    polygon.points[currentControl.pointIndex] = finalPoint;
+    polygon.dirty = true;
+    polygon.setCoords();
     return true;
   }
 
   function anchorWrapper(pointIndex, fn) {
     return function (eventData, transform, x, y) {
-      const fabricObject = transform.target;
-      const absolutePoint = fabric.util.transformPoint(
+      const polygon = transform.target;
+      // Absolute position of the vertex BEFORE update
+      const absoluteBefore = fabric.util.transformPoint(
         new fabric.Point(
-          fabricObject.points[pointIndex].x - fabricObject.pathOffset.x,
-          fabricObject.points[pointIndex].y - fabricObject.pathOffset.y
+          polygon.points[pointIndex].x - polygon.pathOffset.x,
+          polygon.points[pointIndex].y - polygon.pathOffset.y
         ),
-        fabricObject.calcTransformMatrix()
+        polygon.calcTransformMatrix()
       );
       const actionPerformed = fn(eventData, transform, x, y);
-      const newDim = fabricObject._setPositionDimensions({});
-      const polygonBaseSize = fabricObject._getNonTransformedDimensions();
-      const newX =
-        (fabricObject.points[pointIndex].x - fabricObject.pathOffset.x) /
-        polygonBaseSize.x;
-      const newY =
-        (fabricObject.points[pointIndex].y - fabricObject.pathOffset.y) /
-        polygonBaseSize.y;
-      fabricObject.setPositionByOrigin(absolutePoint, newX + 0.5, newY + 0.5);
+      // Recompute dimensions and get absolute position AFTER update
+      polygon._setPositionDimensions({});
+      const absoluteAfter = fabric.util.transformPoint(
+        new fabric.Point(
+          polygon.points[pointIndex].x - polygon.pathOffset.x,
+          polygon.points[pointIndex].y - polygon.pathOffset.y
+        ),
+        polygon.calcTransformMatrix()
+      );
+      // Translate polygon so the edited vertex remains anchored under the cursor
+      polygon.left += (absoluteBefore.x - absoluteAfter.x);
+      polygon.top += (absoluteBefore.y - absoluteAfter.y);
+      polygon.setCoords();
       return actionPerformed;
     };
   }
