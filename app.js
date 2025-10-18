@@ -462,11 +462,17 @@
   function actionHandler(eventData, transform, x, y) {
     const polygon = transform.target;
     const currentControl = polygon.controls[polygon.__corner];
-    // Convert mouse to polygon-local coordinates relative to pathOffset
-    const local = polygon.toLocalPoint(new fabric.Point(x, y), 'left', 'top');
+    const canvas = polygon.canvas;
+    const vpt = canvas && canvas.viewportTransform ? canvas.viewportTransform : fabric.iMatrix;
+    const invVpt = fabric.util.invertTransform(vpt);
+    // Pointer in canvas coords
+    const pointerCanvas = fabric.util.transformPoint(new fabric.Point(x, y), invVpt);
+    // Convert pointer to polygon local space (before pathOffset subtraction)
+    const invMat = fabric.util.invertTransform(polygon.calcTransformMatrix());
+    const pointerLocal = fabric.util.transformPoint(pointerCanvas, invMat);
     const finalPoint = {
-      x: local.x + polygon.pathOffset.x,
-      y: local.y + polygon.pathOffset.y,
+      x: pointerLocal.x + polygon.pathOffset.x,
+      y: pointerLocal.y + polygon.pathOffset.y,
     };
     polygon.points[currentControl.pointIndex] = finalPoint;
     polygon.dirty = true;
@@ -477,27 +483,8 @@
   function anchorWrapper(pointIndex, fn) {
     return function (eventData, transform, x, y) {
       const polygon = transform.target;
-      // Absolute position of the vertex BEFORE update
-      const absoluteBefore = fabric.util.transformPoint(
-        new fabric.Point(
-          polygon.points[pointIndex].x - polygon.pathOffset.x,
-          polygon.points[pointIndex].y - polygon.pathOffset.y
-        ),
-        polygon.calcTransformMatrix()
-      );
       const actionPerformed = fn(eventData, transform, x, y);
-      // Recompute dimensions and get absolute position AFTER update
-      polygon._setPositionDimensions({});
-      const absoluteAfter = fabric.util.transformPoint(
-        new fabric.Point(
-          polygon.points[pointIndex].x - polygon.pathOffset.x,
-          polygon.points[pointIndex].y - polygon.pathOffset.y
-        ),
-        polygon.calcTransformMatrix()
-      );
-      // Translate polygon so the edited vertex remains anchored under the cursor
-      polygon.left += (absoluteBefore.x - absoluteAfter.x);
-      polygon.top += (absoluteBefore.y - absoluteAfter.y);
+      // Update corner coordinates without forcing Fabric to recompute dimensions/left/top
       polygon.setCoords();
       return actionPerformed;
     };
@@ -683,7 +670,9 @@
       const poly = spaceIdToPolygon.get(selectedSpaceId);
       if (poly) {
         const absPts = getPolygonAbsolutePoints(poly);
-        const idx = findClosestEdgeIndex(absPts, pointer, EDGE_SELECT_TOLERANCE_PX);
+        // Avoid edge selection when near a vertex control
+        const nearVertex = absPts.some(p => distance(pointer, p) <= EDGE_SELECT_TOLERANCE_PX * 1.25);
+        const idx = nearVertex ? null : findClosestEdgeIndex(absPts, pointer, EDGE_SELECT_TOLERANCE_PX);
         if (idx !== null) {
           selectedEdgeIndex = idx;
           highlightSelectedEdge(absPts, idx);
