@@ -676,6 +676,8 @@
         if (idx !== null) {
           selectedEdgeIndex = idx;
           highlightSelectedEdge(absPts, idx);
+          // Keep the polygon as the active object so Fabric doesn't fire selection:cleared
+          canvas.setActiveObject(poly);
           updateEdgePanelFromSelection();
           setStatus(`Edge ${idx + 1} selected.`);
           return;
@@ -817,7 +819,8 @@
     updateSpacePanel(space);
     updateEdgePanelFromSelection();
     setSpaceInputsEnabled(!!space);
-    setEdgeInputsEnabled(false);
+    // Keep edge inputs enabled when an edge is currently selected
+    setEdgeInputsEnabled(selectedEdgeIndex != null);
   }
 
   // --------------------------
@@ -856,7 +859,7 @@
 
   function updateEdgePanelFromSelection() {
     const floor = activeFloor();
-    if (!floor || !selectedSpaceId || selectedEdgeIndex == null) {
+    if (!floor || !selectedSpaceId) {
       dom.edgeIsExterior.checked = false;
       dom.edgeHeight.value = "";
       dom.edgeWinWidth.value = "";
@@ -864,6 +867,11 @@
       dom.edgeDirection.value = "N";
       dom.edgeLength.textContent = "-";
       dom.edgeWindowArea.textContent = "-";
+      setEdgeInputsEnabled(false);
+      return;
+    }
+    // If a space is selected but no explicit edge index, keep inputs disabled until an edge is selected
+    if (selectedEdgeIndex == null) {
       setEdgeInputsEnabled(false);
       return;
     }
@@ -877,6 +885,7 @@
     dom.edgeDirection.value = edge.direction || "N";
     dom.edgeLength.textContent = formatWithUnit(edge.length, false);
     dom.edgeWindowArea.textContent = formatWithUnit(edge.winArea, true);
+    // Ensure the inputs are enabled when an edge is selected
     setEdgeInputsEnabled(true);
   }
 
@@ -1372,6 +1381,8 @@
   canvas.on("mouse:down", function(opt) {
     if (isDrawingSpace || isDrawingScale) return;
     if (opt.target) return; // clicking on object
+    // Do not clear selection if an edge is currently selected via custom logic
+    if (selectedEdgeIndex != null) return;
     canvas.discardActiveObject();
     canvas.requestRenderAll();
     onCanvasSelectionCleared();
