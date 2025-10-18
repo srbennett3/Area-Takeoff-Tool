@@ -61,6 +61,55 @@ html, body {
   font-weight: 600;
 }
 
+.project-name-input {
+  background: #0a1020;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  min-width: 300px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+.app-header .project-name-input {
+  background: #0b1324 !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  font-size: 20px !important;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Stronger ID-based override to ensure styling applies in all browsers */
+#projectName {
+  background: #0a1020 !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  padding: 10px 16px !important;
+  min-width: 320px !important;
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.2px !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
+}
+#projectName::placeholder {
+  color: var(--muted) !important;
+  opacity: 0.95 !important;
+}
+.project-name-input::placeholder {
+  color: var(--muted);
+  opacity: 0.9;
+}
+.project-name-input:focus {
+  outline: none;
+  border-color: rgba(37, 99, 235, 0.7);
+  box-shadow: 0 0 0 2px rgba(37,99,235,0.25);
+}
+
 .header-actions button.primary {
   background: var(--primary);
   color: #fff;
@@ -71,6 +120,8 @@ html, body {
   grid-template-columns: 340px 1fr;
   gap: 12px;
   padding: 12px;
+  align-items: stretch;
+  height: 100%;
 }
 
 .sidebar {
@@ -79,6 +130,10 @@ html, body {
   border-radius: 12px;
   padding: 12px;
   overflow: auto;
+  height: 100%;
+  min-height: 100%;
+  align-self: stretch;
+  position: relative;
 }
 
 .panel {
@@ -227,16 +282,30 @@ button:disabled {
 
 .canvas-holder {
   position: relative;
-  overflow: hidden;
+  overflow: auto;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: repeating-conic-gradient(from 45deg, #0b1324 0% 25%, #0a1020 0% 50%) 50% / 20px 20px;
+  height: 100%;
+  -webkit-overflow-scrolling: touch;
 }
 
 #floorCanvas {
   display: block;
-  width: 100%;
-  height: calc(100vh - 200px);
+  /* Use intrinsic canvas size for scrollability; JS sets width/height attributes */
+  max-width: none;
+  max-height: none;
+}
+
+.app-credit {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0.8;
+  pointer-events: none;
+  z-index: 10;
 }
 
 .status {

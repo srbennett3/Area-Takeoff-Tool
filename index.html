@@ -17,14 +17,17 @@
     <header class="app-header">
       <div class="brand">
         <span class="logo" aria-hidden="true">📐</span>
-        <h1>Floorplan Space & Wall Analyzer</h1>
+        <h1>Area Takeoff Tool</h1>
+      </div>
+      <div class="project-name">
+        <input id="projectName" class="project-name-input" type="text" placeholder="Project Title Click To Enter" aria-label="Project name (inline editable)" />
       </div>
       <div class="header-actions">
         <button id="btnExportExcel" class="primary" aria-label="Export to Excel">Export to Excel</button>
       </div>
     </header>
 
-    <main class="app-main">
+    <main class="app-main" style="min-height:0;">
       <aside class="sidebar" aria-label="Controls Sidebar">
         <section class="panel" aria-labelledby="floor-mgmt-title">
           <h2 id="floor-mgmt-title">Floors</h2>
@@ -34,7 +37,7 @@
           </div>
           <div class="row-buttons">
             <button id="btnAddFloor" aria-label="Add new floor">Add Floor</button>
-            <button id="btnDeleteFloor" class="danger" aria-label="Delete current floor">Delete</button>
+            <button id="btnDeleteFloor" class="danger" aria-label="Delete current floor">Delete Floor</button>
           </div>
           <input id="fileFloorImage" type="file" accept="image/*" aria-label="Floorplan Image Upload" style="display:none" />
         </section>
@@ -43,7 +46,7 @@
           <h2 id="drawing-tools-title">Drawing Tools</h2>
           <div class="row-buttons">
             <button id="btnDrawSpace" aria-label="Draw new space polygon">Draw New Space</button>
-            <button id="btnDeleteSpace" class="danger" aria-label="Delete selected space">Delete Space</button>
+            <button id="btnDeleteSpace" class="danger" aria-label="Delete selected space" style="display:none">Delete Space</button>
           </div>
         </section>
 
@@ -126,6 +129,9 @@
               <option value="NW">NW</option>
             </select>
           </div>
+          <div class="row-buttons">
+            <button id="btnSplitEdge" aria-label="Split the selected wall edge" disabled>Split Wall</button>
+          </div>
           <div class="readonly-list">
             <div><span class="label">Wall Length:</span> <span id="edgeLength">-</span></div>
             <div><span class="label">Window Area:</span> <span id="edgeWindowArea">-</span></div>
@@ -142,7 +148,7 @@
             <span class="swatch swatch-edge-selected" aria-label="Selected edge color"></span><span>Selected Edge</span>
           </div>
         </div>
-        <div class="canvas-holder">
+        <div class="canvas-holder" id="canvasHolder">
           <canvas id="floorCanvas" width="1200" height="800" aria-label="Floorplan Canvas" tabindex="0"></canvas>
         </div>
       </section>
@@ -151,11 +157,19 @@
     <footer class="app-footer">
       <span>All data stored locally in your browser.</span>
     </footer>
+  <div class="app-credit" aria-hidden="true">Created by Steven Bennett 2025</div>
   </div>
 
   <script>
   // Prevent touch scrolling from interfering with drawing on some devices
   document.addEventListener('touchmove', function(e){ if(e.target.closest('#floorCanvas')) e.preventDefault(); }, { passive: false });
+  // Allow spacebar typing inside project title input by stopping canvas from intercepting
+  document.addEventListener('keydown', function(e){
+    const target = e.target;
+    if (target && target.id === 'projectName') {
+      e.stopPropagation();
+    }
+  }, true);
   </script>
   <script src="app.js"></script>
 </body>

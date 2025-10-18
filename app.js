@@ -37,7 +37,10 @@
   // IDs
   const dom = {
     canvasEl: document.getElementById("floorCanvas"),
+    canvasHolder: document.getElementById("canvasHolder"),
     statusText: document.getElementById("statusText"),
+    // Project
+    projectName: document.getElementById("projectName"),
 
     // Floors
     floorSelect: document.getElementById("floorSelect"),
@@ -138,6 +141,7 @@
   // App State
   // --------------------------
   const AppState = {
+    projectName: "",
     floors: [], // [{ id, name, imageSrc, backgroundFit, scale: { realLen, pixelLen, unit, line }, spaces: [Space] }]
     activeFloorId: null,
   };
@@ -186,6 +190,7 @@
         if (parsed && parsed.floors) {
           AppState.floors = parsed.floors;
           AppState.activeFloorId = parsed.activeFloorId || (parsed.floors[0]?.id ?? null);
+          if (parsed.projectName) AppState.projectName = parsed.projectName;
         }
       }
     } catch (e) {
@@ -198,6 +203,15 @@
   // --------------------------
   function setStatus(text) {
     dom.statusText.textContent = text;
+  }
+
+  function setProjectNameUI(name) {
+    // Preserve spaces exactly as typed in the input; only trim for title fallback.
+    const val = typeof name === "string" ? name : "";
+    if (dom.projectName) dom.projectName.value = val;
+    // Also reflect in document title (trim only for emptiness check)
+    const titleVal = val && val.trim() ? val.trim() : "Project Title Click To Enter";
+    document.title = `${titleVal} – Area Takeoff Tool`;
   }
 
   function confirmAction(message) {
@@ -716,6 +730,10 @@
     if (!target) return;
     if (target.get("fpType") === "space") {
       selectSpaceByPolygon(target);
+      if (dom.btnDeleteSpace) {
+        const show = canvas.getActiveObjects().length === 1;
+        dom.btnDeleteSpace.style.display = show ? '' : 'none';
+      }
     }
   }
 
@@ -732,6 +750,7 @@
     updateEdgePanelFromSelection();
     setSpaceInputsEnabled(false);
     setEdgeInputsEnabled(false);
+    if (dom.btnDeleteSpace) dom.btnDeleteSpace.style.display = 'none';
   }
 
   function findClosestEdgeIndex(points, clickPoint, tolerancePx) {
@@ -821,6 +840,11 @@
     setSpaceInputsEnabled(!!space);
     // Keep edge inputs enabled when an edge is currently selected
     setEdgeInputsEnabled(selectedEdgeIndex != null);
+    // Toggle Delete Space button visibility: only when exactly one space is selected
+    if (dom.btnDeleteSpace) {
+      const show = !!space && canvas.getActiveObjects().length === 1;
+      dom.btnDeleteSpace.style.display = show ? '' : 'none';
+    }
   }
 
   // --------------------------
@@ -1397,6 +1421,31 @@
     canvas.setHeight(DEFAULT_CANVAS_HEIGHT);
 
     loadState();
+    // Initialize project header
+    setProjectNameUI(AppState.projectName);
+    if (dom.projectName) {
+      // Focus: if empty, show placeholder and clear value for easy typing
+      dom.projectName.addEventListener('focus', () => {
+        if (!AppState.projectName || !AppState.projectName.trim()) {
+          dom.projectName.value = "";
+        }
+      });
+      // Input: live update state and title
+      dom.projectName.addEventListener('input', () => {
+        const raw = dom.projectName.value;
+        AppState.projectName = raw;
+        setProjectNameUI(AppState.projectName);
+        saveState();
+      });
+      // Blur: if empty, revert to placeholder behavior
+      dom.projectName.addEventListener('blur', () => {
+        if (!dom.projectName.value.trim()) {
+          AppState.projectName = "";
+          setProjectNameUI("");
+          saveState();
+        }
+      });
+    }
     updateFloorSelectOptions();
     if (AppState.activeFloorId) {
       const floor = activeFloor();
@@ -1407,6 +1456,23 @@
     // Disable inputs until a selection is made
     setSpaceInputsEnabled(false);
     setEdgeInputsEnabled(false);
+    // Delete Space button visibility on load
+    if (dom.btnDeleteSpace) dom.btnDeleteSpace.style.display = 'none';
+
+    // Keyboard panning with arrow keys (scroll the canvas holder)
+    if (dom.canvasHolder) {
+      const PAN_STEP = 40; // pixels per keypress
+      document.addEventListener('keydown', (e) => {
+        // Avoid intercepting typing in inputs/selects/textarea
+        const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+        const isTyping = tag === 'input' || tag === 'textarea' || tag === 'select';
+        if (isTyping) return;
+        if (e.key === 'ArrowLeft') { dom.canvasHolder.scrollLeft -= PAN_STEP; }
+        else if (e.key === 'ArrowRight') { dom.canvasHolder.scrollLeft += PAN_STEP; }
+        else if (e.key === 'ArrowUp') { dom.canvasHolder.scrollTop -= PAN_STEP; }
+        else if (e.key === 'ArrowDown') { dom.canvasHolder.scrollTop += PAN_STEP; }
+      });
+    }
   }
 
   init();
