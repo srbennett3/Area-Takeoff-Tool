@@ -8,7 +8,7 @@
  *
  * Key UX:
  * - Draw Scale: click two points to create a reference line. Enter real length + unit.
- * - Draw Space: click to add vertices; double-click to finish. Drag vertices to edit.
+ * - Draw Space: click to add vertices; click near first vertex to finish. Drag vertices to edit.
  * - Select Space: click polygon. Select Edge: click near an edge.
  * - Edit properties in sidebar. All derived values auto-recompute.
  */
@@ -34,6 +34,11 @@
   const COLOR_EDGE_SELECTED = "rgba(255,221,87,0.95)"; // yellow highlight
   // Configurable edge hover/selection buffer (in pixels in canvas space)
   const EDGE_HIT_BUFFER_PX = 6;
+  // Configurable vertex drag/hover radius and handle size
+  const VERTEX_DRAG_RADIUS_PX = 12;
+  const VERTEX_HANDLE_SIZE_PX = 12;
+  // Configurable proximity (in pixels) to close polygon by clicking near first vertex
+  const SPACE_CLOSE_THRESHOLD_PX = 12;
 
   // Units: Keep internal values in feet; convert for UI/export
   const METERS_PER_FOOT = 0.3048;
@@ -470,6 +475,8 @@
     polygon.hasBorders = true;
     polygon.cornerColor = "#93c5fd"; // blue-300
     polygon.cornerStyle = "circle";
+    polygon.cornerSize = VERTEX_HANDLE_SIZE_PX;
+    polygon.touchCornerSize = Math.max(VERTEX_HANDLE_SIZE_PX, 24);
     polygon.transparentCorners = false;
 
     const lastControl = polygon.points.length - 1;
@@ -571,9 +578,20 @@
     tempDrawLines.forEach(l => canvas.remove(l));
     tempDrawCircles = [];
     tempDrawLines = [];
-    setStatus("Drawing space: click to add vertices, double-click to finish.");
+    setStatus("Drawing space: click to add vertices, click near first point to finish.");
     // Crosshair while drawing spaces
     canvas.defaultCursor = "crosshair";
+    // Deselect any selected space when starting a new draw
+    canvas.discardActiveObject();
+    onCanvasSelectionCleared();
+    // Reset fills to default for all spaces
+    canvas.getObjects().forEach(o => {
+      if (o.get("fpType") === "space") {
+        o.set("fill", COLOR_SPACE);
+        o.set("stroke", COLOR_SPACE_STROKE);
+      }
+    });
+    canvas.requestRenderAll();
   }
 
   function enterScaleMode() {
@@ -638,10 +656,14 @@
     tempDrawCircles = [];
     tempDrawLines = [];
 
-    // Add polygon
-    addPolygonForSpace(space);
+    // Add polygon and immediately select it so vertex controls are visible
+    const poly = addPolygonForSpace(space);
     recalcSpaceDerived(space);
+    if (poly) {
+      canvas.setActiveObject(poly);
+    }
     selectSpace(space.id);
+    canvas.requestRenderAll();
     isDrawingSpace = false;
     setStatus("Space created. Select edges by clicking near them.");
     saveState();
@@ -663,12 +685,6 @@
     saveState();
   }
 
-  function onCanvasDblClick(opt) {
-    if (isDrawingSpace) {
-      endDrawSpace();
-    }
-  }
-
   function onCanvasMouseDown(opt) {
     const floor = activeFloor();
     if (!floor) {
@@ -683,6 +699,18 @@
       canvas.defaultCursor = (isDrawingSpace || isDrawingScale) ? "crosshair" : "default";
     }
     if (isDrawingSpace) {
+      // Close polygon if clicking near the first vertex (without adding a new vertex)
+      if (tempDrawPoints.length > 0) {
+        const first = tempDrawPoints[0];
+        const dToFirst = distance(pointer, first);
+        if (dToFirst <= SPACE_CLOSE_THRESHOLD_PX) {
+          // Prevent the background mouse:down handler from clearing selection in this cycle
+          suppressDeselectUntilMouseUp = true;
+          if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
+          endDrawSpace();
+          return;
+        }
+      }
       // Add point + temp visuals
       const circ = new fabric.Circle({
         radius: 3,
@@ -1518,7 +1546,6 @@
   // --------------------------
   // Canvas events
   // --------------------------
-  canvas.on("mouse:dblclick", onCanvasDblClick);
   canvas.on("mouse:down", onCanvasMouseDown);
   canvas.on("selection:created", onCanvasSelectionCreated);
   canvas.on("selection:updated", onCanvasSelectionUpdated);
@@ -1550,7 +1577,7 @@
     if (!poly) { canvas.defaultCursor = "default"; return; }
     const pointer = canvas.getPointer(opt.e, false); // canvas-space coords
     const absPts = getPolygonAbsolutePoints(poly);
-    const nearVertex = absPts.some(p => distance(pointer, p) <= Math.max(4, EDGE_HIT_BUFFER_PX * 0.6));
+    const nearVertex = absPts.some(p => distance(pointer, p) <= VERTEX_DRAG_RADIUS_PX);
     if (nearVertex) { hoverEdgeIndex = null; canDragSelectedSpace = false; canvas.defaultCursor = "default"; return; }
     const idx = findClosestEdgeIndex(absPts, pointer, EDGE_HIT_BUFFER_PX);
     hoverEdgeIndex = (idx !== null) ? idx : null;
