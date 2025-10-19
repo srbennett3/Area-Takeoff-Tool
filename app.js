@@ -32,7 +32,8 @@
   const COLOR_SPACE_SELECTED = "rgba(37, 99, 235, 0.18)"; // blueish
   const COLOR_SPACE_SELECTED_STROKE = "#2563eb";
   const COLOR_EDGE_SELECTED = "rgba(255,221,87,0.95)"; // yellow highlight
-  const EDGE_SELECT_TOLERANCE_PX = 8;
+  // Configurable edge hover/selection buffer (in pixels in canvas space)
+  const EDGE_HIT_BUFFER_PX = 6;
 
   // Units: Keep internal values in feet; convert for UI/export
   const METERS_PER_FOOT = 0.3048;
@@ -108,7 +109,7 @@
   }
 
   function segmentDistance(point, a, b) {
-    // Return min distance from point to line segment ab
+    // Min distance from point to line segment ab (symmetric inside/outside)
     const A = { x: a.x, y: a.y };
     const B = { x: b.x, y: b.y };
     const P = { x: point.x, y: point.y };
@@ -166,6 +167,8 @@
     selection: true,
     preserveObjectStacking: true,
   });
+  // Ensure hover cursor defaults to system arrow when hovering targets
+  canvas.hoverCursor = "default";
 
   // Current interaction mode flags
   let isDrawingSpace = false;
@@ -180,6 +183,11 @@
   // Selected objects
   let selectedSpaceId = null;
   let selectedEdgeIndex = null; // index within selected space polygon edges
+  let hoverEdgeIndex = null;    // edge index under cursor for the selected space (or null)
+  let canDragSelectedSpace = false; // true when inside selected space and not near an edge
+  let suppressDeselectUntilMouseUp = false; // guards background deselect while pointer is active near edge
+  let lastSelectedSpaceId = null; // to restore selection if Fabric clears while pointer active
+  let lastPointerCanvas = { x: 0, y: 0 };
 
   // Mapping from polygon object to space id
   const polygonIdToSpaceId = new Map(); // fabric object id -> spaceId
@@ -415,6 +423,7 @@
       hasBorders: true,
       selectable: true,
       perPixelTargetFind: true,
+      hoverCursor: "default",
     });
     poly.set("fpType", "space");
     poly.set("spaceId", space.id);
@@ -515,6 +524,17 @@
       y: pointerLocal.y + polygon.pathOffset.y,
     };
     polygon.points[currentControl.pointIndex] = finalPoint;
+    // Deselect any selected edge while dragging a vertex
+    if (selectedEdgeIndex != null) {
+      selectedEdgeIndex = null;
+      hoverEdgeIndex = null;
+      clearEdgeHighlight();
+      updateEdgePanelFromSelection();
+      if (canvas && canvas.upperCanvasEl && canvas.upperCanvasEl.style) {
+        canvas.defaultCursor = "default";
+        canvas.upperCanvasEl.style.cursor = "default";
+      }
+    }
     polygon.dirty = true;
     polygon.setCoords();
     return true;
@@ -524,8 +544,18 @@
     return function (eventData, transform, x, y) {
       const polygon = transform.target;
       const actionPerformed = fn(eventData, transform, x, y);
-      // Update corner coordinates without forcing Fabric to recompute dimensions/left/top
+      // After a vertex drag, refresh the polygon's bounding box while preserving position
+      const prevLeft = polygon.left;
+      const prevTop = polygon.top;
+      // This recomputes width/height based on updated points
+      if (typeof polygon._setPositionDimensions === 'function') {
+        polygon._setPositionDimensions({});
+      }
+      polygon.left = prevLeft;
+      polygon.top = prevTop;
+      polygon.dirty = true;
       polygon.setCoords();
+      if (polygon.canvas) polygon.canvas.requestRenderAll();
       return actionPerformed;
     };
   }
@@ -542,6 +572,8 @@
     tempDrawCircles = [];
     tempDrawLines = [];
     setStatus("Drawing space: click to add vertices, double-click to finish.");
+    // Crosshair while drawing spaces
+    canvas.defaultCursor = "crosshair";
   }
 
   function enterScaleMode() {
@@ -549,6 +581,8 @@
     isDrawingScale = true;
     tempScalePoints = [];
     setStatus("Scale: click two points to create reference line.");
+    // Crosshair while drawing scale line
+    canvas.defaultCursor = "crosshair";
     const floor = activeFloor();
     removeScaleVisuals();
     if (floor?.scale) {
@@ -561,6 +595,8 @@
   function cancelAllModes() {
     isDrawingSpace = false;
     isDrawingScale = false;
+    // Reset cursor when leaving draw modes
+    canvas.defaultCursor = "default";
     // Turn off scale line editing
     canvas.getObjects().forEach(o => {
       if (o.get("fpType") === "scaleLine") {
@@ -640,7 +676,12 @@
       return;
     }
 
-    const pointer = canvas.getPointer(opt.e);
+    const pointer = canvas.getPointer(opt.e, false);
+    lastPointerCanvas = { x: pointer.x, y: pointer.y };
+    // Edge hover/selection gating: pointer cursor appears over edges only when a space is selected
+    if (!selectedSpaceId) {
+      canvas.defaultCursor = (isDrawingSpace || isDrawingScale) ? "crosshair" : "default";
+    }
     if (isDrawingSpace) {
       // Add point + temp visuals
       const circ = new fabric.Circle({
@@ -705,26 +746,63 @@
       }
     }
 
-    // Selection: If clicking on canvas while a space is selected, possibly edge selection
+    // Selection & dragging: only allow dragging when move cursor is visible
     if (selectedSpaceId) {
       const poly = spaceIdToPolygon.get(selectedSpaceId);
       if (poly) {
+      // If the pointer cursor is visible and we already have a hover edge, select it immediately
+      const pointerVisibleEarly = (canvas.defaultCursor === "pointer") || (canvas.upperCanvasEl && canvas.upperCanvasEl.style && canvas.upperCanvasEl.style.cursor === "pointer");
+      if (pointerVisibleEarly && hoverEdgeIndex != null) {
+        const absPtsHover = getPolygonAbsolutePoints(poly);
+        selectedEdgeIndex = hoverEdgeIndex;
+        highlightSelectedEdge(absPtsHover, selectedEdgeIndex);
+        canvas.setActiveObject(poly);
+        updateEdgePanelFromSelection();
+        setStatus(`Edge ${selectedEdgeIndex + 1} selected.`);
+        if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
+        return;
+      }
         const absPts = getPolygonAbsolutePoints(poly);
         // Avoid edge selection when near a vertex control
-        const nearVertex = absPts.some(p => distance(pointer, p) <= EDGE_SELECT_TOLERANCE_PX * 1.25);
-        const idx = nearVertex ? null : findClosestEdgeIndex(absPts, pointer, EDGE_SELECT_TOLERANCE_PX);
-        if (idx !== null) {
+        const nearVertex = absPts.some(p => distance(pointer, p) <= Math.max(4, EDGE_HIT_BUFFER_PX * 0.6));
+        let idx = nearVertex ? null : findClosestEdgeIndex(absPts, pointer, EDGE_HIT_BUFFER_PX);
+        if (idx === null && hoverEdgeIndex != null) {
+          // Use the last hover edge if the click hit-test missed (e.g., jitter or canvas rounding)
+          idx = hoverEdgeIndex;
+        } else if (idx !== null) {
+          hoverEdgeIndex = idx; // update hover edge when we have a positive hit
+        }
+        const isPointerVisible = (canvas.defaultCursor === "pointer") || (canvas.upperCanvasEl && canvas.upperCanvasEl.style && canvas.upperCanvasEl.style.cursor === "pointer");
+        // Only allow selection if the cursor is visibly a pointer (hover state) over the edge
+        if (idx !== null || (isPointerVisible && hoverEdgeIndex != null)) {
+          if (idx === null) idx = hoverEdgeIndex;
+          if (!isPointerVisible) {
+            canvas.defaultCursor = "pointer";
+            if (canvas.upperCanvasEl && canvas.upperCanvasEl.style) canvas.upperCanvasEl.style.cursor = "pointer";
+            if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
+            return; // require visible pointer prior to selection
+          }
           selectedEdgeIndex = idx;
           highlightSelectedEdge(absPts, idx);
           // Keep the polygon as the active object so Fabric doesn't fire selection:cleared
           canvas.setActiveObject(poly);
           updateEdgePanelFromSelection();
           setStatus(`Edge ${idx + 1} selected.`);
+          canvas.defaultCursor = "pointer";
+          if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
           return;
         } else {
+          // Not near an edge: only allow dragging if move cursor is active
+          const isMoveCursor = (canvas.defaultCursor === "move") || (canvas.upperCanvasEl && canvas.upperCanvasEl.style && canvas.upperCanvasEl.style.cursor === "move");
+          if (!isMoveCursor) {
+            // prevent inadvertent deselect/drag; keep selection and do nothing
+            if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
+            return;
+          }
           clearEdgeHighlight();
           selectedEdgeIndex = null;
           updateEdgePanelFromSelection();
+          canvas.defaultCursor = "default";
         }
       }
     }
@@ -736,7 +814,20 @@
       for (const sp of f.spaces) {
         if (isPointInPolygon(pointer, sp.vertices)) { insideAny = true; break; }
       }
+      // Keep selection if we're near an edge of the currently selected space
       if (!insideAny) {
+        if (selectedSpaceId) {
+          const poly = spaceIdToPolygon.get(selectedSpaceId);
+          if (poly) {
+            const absPts = getPolygonAbsolutePoints(poly);
+            const idx = findClosestEdgeIndex(absPts, pointer, EDGE_HIT_BUFFER_PX);
+            const pointerVisible = (canvas.defaultCursor === "pointer") || (canvas.upperCanvasEl && canvas.upperCanvasEl.style && canvas.upperCanvasEl.style.cursor === "pointer");
+            if (idx !== null || hoverEdgeIndex != null || pointerVisible) {
+              // do not clear selection when near an edge
+              return;
+            }
+          }
+        }
         canvas.discardActiveObject();
         onCanvasSelectionCleared();
         // Reset fills to default
@@ -768,9 +859,21 @@
   }
 
   function onCanvasSelectionCleared() {
+    // If pointer is active near an edge, restore previous selection immediately
+    const pointerVisible = (canvas.defaultCursor === "pointer") || (canvas.upperCanvasEl && canvas.upperCanvasEl.style && canvas.upperCanvasEl.style.cursor === "pointer");
+    if ((hoverEdgeIndex != null || pointerVisible) && lastSelectedSpaceId) {
+      const poly = spaceIdToPolygon.get(lastSelectedSpaceId);
+      if (poly) {
+        canvas.setActiveObject(poly);
+        selectSpace(lastSelectedSpaceId);
+        canvas.requestRenderAll();
+        return;
+      }
+    }
     // Deselect space
     selectedSpaceId = null;
     selectedEdgeIndex = null;
+    hoverEdgeIndex = null;
     clearEdgeHighlight();
     updateSpacePanel();
     updateEdgePanelFromSelection();
@@ -840,9 +943,11 @@
   function selectSpace(spaceId) {
     const changedSpace = selectedSpaceId !== spaceId;
     selectedSpaceId = spaceId;
+    lastSelectedSpaceId = spaceId;
     if (changedSpace) {
       selectedEdgeIndex = null;
       clearEdgeHighlight();
+      hoverEdgeIndex = null;
     }
     // Update fills
     canvas.getObjects().forEach(o => {
@@ -1418,6 +1523,68 @@
   canvas.on("selection:created", onCanvasSelectionCreated);
   canvas.on("selection:updated", onCanvasSelectionUpdated);
   canvas.on("selection:cleared", onCanvasSelectionCleared);
+  canvas.on("mouse:up", function(){ suppressDeselectUntilMouseUp = false; });
+  // Update cursor on hover to show pointer only when a space is selected and near an edge
+  canvas.on("mouse:move", function(opt) {
+    if (isDrawingSpace || isDrawingScale) {
+      canvas.defaultCursor = "crosshair";
+      return;
+    }
+    if (!selectedSpaceId) {
+      // Before selection: show pointer when hovering over any space polygon
+      const pointer = canvas.getPointer(opt.e, false);
+      const f = activeFloor();
+      let overAny = false;
+      if (f && Array.isArray(f.spaces)) {
+        for (const sp of f.spaces) {
+          if (isPointInPolygon(pointer, sp.vertices)) { overAny = true; break; }
+        }
+      }
+      canvas.defaultCursor = overAny ? "pointer" : "default";
+      if (canvas.upperCanvasEl && canvas.upperCanvasEl.style) {
+        canvas.upperCanvasEl.style.cursor = canvas.defaultCursor;
+      }
+      return;
+    }
+    const poly = spaceIdToPolygon.get(selectedSpaceId);
+    if (!poly) { canvas.defaultCursor = "default"; return; }
+    const pointer = canvas.getPointer(opt.e, false); // canvas-space coords
+    const absPts = getPolygonAbsolutePoints(poly);
+    const nearVertex = absPts.some(p => distance(pointer, p) <= Math.max(4, EDGE_HIT_BUFFER_PX * 0.6));
+    if (nearVertex) { hoverEdgeIndex = null; canDragSelectedSpace = false; canvas.defaultCursor = "default"; return; }
+    const idx = findClosestEdgeIndex(absPts, pointer, EDGE_HIT_BUFFER_PX);
+    hoverEdgeIndex = (idx !== null) ? idx : null;
+    if (hoverEdgeIndex !== null) {
+      canDragSelectedSpace = false;
+      canvas.defaultCursor = "pointer";
+      suppressDeselectUntilMouseUp = true;
+    } else {
+      // If pointer is inside the polygon (not near an edge), show move and allow dragging
+      const floor = activeFloor();
+      const space = floor?.spaces.find(s => s.id === selectedSpaceId);
+      const inside = space ? isPointInPolygon(pointer, space.vertices) : false;
+      canDragSelectedSpace = !!inside;
+      if (inside) {
+        canvas.defaultCursor = "move";
+      } else {
+        // Not near selected edge and not inside selected space: show pointer if over any other space
+        let overOther = false;
+        const f = activeFloor();
+        if (f && Array.isArray(f.spaces)) {
+          for (const sp of f.spaces) {
+            if (sp.id === selectedSpaceId) continue;
+            if (isPointInPolygon(pointer, sp.vertices)) { overOther = true; break; }
+          }
+        }
+        canvas.defaultCursor = overOther ? "pointer" : "default";
+      }
+      if (!inside) suppressDeselectUntilMouseUp = false;
+    }
+    // Force the visible cursor to match our logic even when hovering Fabric targets
+    if (canvas.upperCanvasEl && canvas.upperCanvasEl.style) {
+      canvas.upperCanvasEl.style.cursor = canvas.defaultCursor;
+    }
+  });
 
   // Deselect when clicking empty background within the canvas area (but not outside app)
   canvas.on("mouse:down", function(opt) {
@@ -1425,9 +1592,16 @@
     if (opt.target) return; // clicking on object
     // Do not clear selection if an edge is currently selected via custom logic
     if (selectedEdgeIndex != null) return;
+    // Keep selection if hovering a selectable edge (pointer cursor active)
+    const pointerVisible = (canvas.defaultCursor === "pointer") || (canvas.upperCanvasEl && canvas.upperCanvasEl.style && canvas.upperCanvasEl.style.cursor === "pointer");
+    if (hoverEdgeIndex != null || pointerVisible || suppressDeselectUntilMouseUp) {
+      if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
+      return;
+    }
     canvas.discardActiveObject();
     canvas.requestRenderAll();
     onCanvasSelectionCleared();
+    canvas.defaultCursor = "default";
   });
 
   // --------------------------
