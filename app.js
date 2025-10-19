@@ -34,6 +34,19 @@
   const COLOR_EDGE_SELECTED = "rgba(255,221,87,0.95)"; // yellow highlight
   const EDGE_SELECT_TOLERANCE_PX = 8;
 
+  // Units: Keep internal values in feet; convert for UI/export
+  const METERS_PER_FOOT = 0.3048;
+  function unitAbbrev() { return (AppState.displayUnit === "meters") ? "m" : "ft"; }
+  function feetToDisplayLength(feet) {
+    return (AppState.displayUnit === "meters") ? feet * METERS_PER_FOOT : feet;
+  }
+  function displayLengthToFeet(val) {
+    return (AppState.displayUnit === "meters") ? val / METERS_PER_FOOT : val;
+  }
+  function feet2ToDisplayArea(feet2) {
+    return (AppState.displayUnit === "meters") ? feet2 * (METERS_PER_FOOT * METERS_PER_FOOT) : feet2;
+  }
+
   // IDs
   const dom = {
     canvasEl: document.getElementById("floorCanvas"),
@@ -109,10 +122,11 @@
     return distance(P, C);
   }
 
-  function toFixedSmart(n, digits = 3) {
+  function toFixedSmart(n, digits = 1) {
     if (!isFinite(n)) return "-";
     return Number(n.toFixed(digits)).toString();
   }
+  function roundToTenth(n) { return Math.round((isFinite(n) ? n : 0) * 10) / 10; }
 
   function isPointInPolygon(point, vertices) {
     let inside = false;
@@ -142,6 +156,7 @@
   // --------------------------
   const AppState = {
     projectName: "",
+    displayUnit: "feet",
     floors: [], // [{ id, name, imageSrc, backgroundFit, scale: { realLen, pixelLen, unit, line }, spaces: [Space] }]
     activeFloorId: null,
   };
@@ -191,6 +206,16 @@
           AppState.floors = parsed.floors;
           AppState.activeFloorId = parsed.activeFloorId || (parsed.floors[0]?.id ?? null);
           if (parsed.projectName) AppState.projectName = parsed.projectName;
+          if (parsed.displayUnit) AppState.displayUnit = parsed.displayUnit;
+          // migrate scale to internal feet
+          AppState.floors.forEach(f => {
+            if (!f.scale) return;
+            if (typeof f.scale.realLenFeet !== 'number') {
+              const unit = f.scale.unit || 'feet';
+              const real = clampNum(f.scale.realLen);
+              f.scale.realLenFeet = unit === 'meters' ? (real / METERS_PER_FOOT) : real;
+            }
+          });
         }
       }
     } catch (e) {
@@ -267,19 +292,20 @@
   function getScaleFactorForFloor(floor) {
     if (!floor?.scale) return 0;
     const pixelLen = clampNum(floor.scale.pixelLen);
-    const realLen = clampNum(floor.scale.realLen);
-    if (pixelLen <= 0 || realLen <= 0) return 0;
-    return realLen / pixelLen;
+    const realLenFeet = clampNum(floor.scale.realLenFeet);
+    if (pixelLen <= 0 || realLenFeet <= 0) return 0;
+    return realLenFeet / pixelLen; // feet per pixel
   }
 
   function setScaleInputsFromFloor(floor) {
     if (!floor || !floor.scale) {
       dom.scaleLength.value = "";
-      dom.scaleUnit.value = "feet";
+      dom.scaleUnit.value = AppState.displayUnit || "feet";
       return;
     }
-    dom.scaleLength.value = floor.scale.realLen ?? "";
-    dom.scaleUnit.value = floor.scale.unit || "feet";
+    const feetLen = clampNum(floor.scale.realLenFeet || 0);
+    dom.scaleLength.value = feetToDisplayLength(feetLen) || "";
+    dom.scaleUnit.value = AppState.displayUnit || "feet";
   }
 
   // --------------------------
@@ -914,14 +940,15 @@
   }
 
   function formatWithUnit(value, isArea) {
-    const floor = activeFloor();
-    const unit = floor?.scale?.unit || "feet";
+    const unit = unitAbbrev();
+    const displayValRaw = isArea ? feet2ToDisplayArea(value) : feetToDisplayLength(value);
+    const displayVal = roundToTenth(displayValRaw);
     const suffix = isArea ? ` ${unit}²` : ` ${unit}`;
-    return isFinite(value) && value > 0 ? `${toFixedSmart(value)}${suffix}` : "-";
+    return isFinite(displayVal) && displayVal > 0 ? `${toFixedSmart(displayVal)}${suffix}` : "-";
   }
 
   function updateUnitSuffixes() {
-    const unit = activeFloor()?.scale?.unit || "feet";
+    const unit = unitAbbrev();
     if (dom.spaceCeilingUnit) dom.spaceCeilingUnit.textContent = unit;
     if (dom.edgeHeightUnit) dom.edgeHeightUnit.textContent = unit;
     if (dom.edgeWinWidthUnit) dom.edgeWinWidthUnit.textContent = unit;
@@ -1074,7 +1101,7 @@
     const wb = XLSX.utils.book_new();
 
     AppState.floors.forEach(floor => {
-      const unit = floor.scale?.unit || "feet";
+      const unit = unitAbbrev();
       // Build rows per space with required columns
       const rows = floor.spaces.map(space => {
         // Aggregate wall area and window area by direction (exterior only)
@@ -1093,42 +1120,34 @@
 
         return {
           "Room Name": space.name || "",
-          "Average Ceiling Height": space.ceilingHeight || 0,
-          "Exterior Perimeter Length": space.exteriorPerimeter || 0,
-          "Floor Area": space.area || 0,
+          [`Average Ceiling Height (${unit})`]: roundToTenth(feetToDisplayLength(space.ceilingHeight || 0)),
+          [`Exterior Perimeter Length (${unit})`]: roundToTenth(feetToDisplayLength(space.exteriorPerimeter || 0)),
+          [`Floor Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(space.area || 0)),
 
-          "N Wall Area": wallAreaByDir["N"],
-          "NW Wall Area": wallAreaByDir["NW"],
-          "NE Wall Area": wallAreaByDir["NE"],
-          "S Wall Area": wallAreaByDir["S"],
-          "SW Wall Area": wallAreaByDir["SW"],
-          "SE Wall Area": wallAreaByDir["SE"],
-          "E Wall Area": wallAreaByDir["E"],
-          "W Wall Area": wallAreaByDir["W"],
+          [`N Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["N"])) ,
+          [`NW Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["NW"])) ,
+          [`NE Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["NE"])) ,
+          [`S Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["S"])) ,
+          [`SW Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["SW"])) ,
+          [`SE Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["SE"])) ,
+          [`E Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["E"])) ,
+          [`W Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["W"])) ,
 
-          "N Window Area": winAreaByDir["N"],
-          "NW Window Area": winAreaByDir["NW"],
-          "NE Window Area": winAreaByDir["NE"],
-          "S Window Area": winAreaByDir["S"],
-          "SW Window Area": winAreaByDir["SW"],
-          "SE Window Area": winAreaByDir["SE"],
-          "E Window Area": winAreaByDir["E"],
-          "W Window Area": winAreaByDir["W"],
+          [`N Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["N"])) ,
+          [`NW Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["NW"])) ,
+          [`NE Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["NE"])) ,
+          [`S Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["S"])) ,
+          [`SW Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["SW"])) ,
+          [`SE Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["SE"])) ,
+          [`E Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["E"])) ,
+          [`W Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["W"])) ,
 
           "_units_note": unit
         };
       });
 
       // Define column order
-      const header = [
-        "Room Name",
-        "Average Ceiling Height",
-        "Exterior Perimeter Length",
-        "Floor Area",
-        "N Wall Area","NW Wall Area","NE Wall Area","S Wall Area","SW Wall Area","SE Wall Area","E Wall Area","W Wall Area",
-        "N Window Area","NW Window Area","NE Window Area","S Window Area","SW Window Area","SE Window Area","E Window Area","W Window Area",
-        "_units_note"
-      ];
+      const header = Object.keys(rows[0] || {});
 
       const ws = XLSX.utils.json_to_sheet(rows, { header });
       // Add units in header row 1 (optional)
@@ -1147,24 +1166,23 @@
   dom.scaleLength.addEventListener("change", () => {
     const floor = activeFloor();
     if (!floor) return;
-    const realLen = parseFloat(dom.scaleLength.value);
-    if (!(realLen > 0)) {
+    const realLenDisplay = parseFloat(dom.scaleLength.value);
+    if (!(realLenDisplay > 0)) {
       alert("Real length must be a positive number.");
-      dom.scaleLength.value = floor.scale?.realLen ?? "";
+      const existingFeet = clampNum(floor.scale?.realLenFeet || 0);
+      dom.scaleLength.value = existingFeet ? feetToDisplayLength(existingFeet) : "";
       return;
     }
-    floor.scale = floor.scale || { realLen: 0, pixelLen: 0, unit: dom.scaleUnit.value, line: null };
-    floor.scale.realLen = realLen;
+    const realLenFeet = displayLengthToFeet(realLenDisplay);
+    floor.scale = floor.scale || { realLenFeet: 0, pixelLen: 0, unit: dom.scaleUnit.value, line: null };
+    floor.scale.realLenFeet = realLenFeet;
     saveState();
     recalcAllSpacesForFloor(floor);
     setStatus("Scale real length updated.");
   });
 
   dom.scaleUnit.addEventListener("change", () => {
-    const floor = activeFloor();
-    if (!floor) return;
-    floor.scale = floor.scale || { realLen: 0, pixelLen: 0, unit: dom.scaleUnit.value, line: null };
-    floor.scale.unit = dom.scaleUnit.value;
+    AppState.displayUnit = dom.scaleUnit.value;
     saveState();
     updatePanelsIfSelectionActive();
     updateUnitSuffixes();
