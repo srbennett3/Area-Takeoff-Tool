@@ -32,6 +32,8 @@
   const COLOR_SPACE_SELECTED = "rgba(37, 99, 235, 0.18)"; // blueish
   const COLOR_SPACE_SELECTED_STROKE = "#2563eb";
   const COLOR_EDGE_SELECTED = "rgba(255,221,87,0.95)"; // yellow highlight
+  const COLOR_VERTEX_SELECTED_FILL = "#f59e0b"; // vertex highlight fill
+  const COLOR_VERTEX_SELECTED_STROKE = "#fbbf24"; // vertex highlight stroke
   // Configurable edge hover/selection buffer (in pixels in canvas space)
   const EDGE_HIT_BUFFER_PX = 6;
   // Configurable vertex drag/hover radius and handle size
@@ -71,6 +73,7 @@
     btnDrawSpace: document.getElementById("btnDrawSpace"),
     btnDeleteSpace: document.getElementById("btnDeleteSpace"),
     btnInsertVertex: document.getElementById("btnInsertVertex"),
+    btnDeleteVertex: document.getElementById("btnDeleteVertex"),
     btnScaleDraw: document.getElementById("btnScaleDraw"),
     btnScaleToggle: document.getElementById("btnScaleToggle"),
 
@@ -196,6 +199,9 @@
   let suppressDeselectUntilMouseUp = false; // guards background deselect while pointer is active near edge
   let lastSelectedSpaceId = null; // to restore selection if Fabric clears while pointer active
   let lastPointerCanvas = { x: 0, y: 0 };
+  // Vertex selection state
+  let selectedVertexIndex = null; // currently selected vertex index within selected space
+  let selectedVertexVisual = null; // highlight circle for selected vertex
 
   // Mapping from polygon object to space id
   const polygonIdToSpaceId = new Map(); // fabric object id -> spaceId
@@ -547,6 +553,14 @@
     }
     polygon.dirty = true;
     polygon.setCoords();
+    // Keep vertex highlight synced if dragging the selected vertex
+    if (selectedSpaceId && selectedVertexIndex != null && currentControl && typeof currentControl.pointIndex === 'number') {
+      const spaceId = polygon.get("spaceId");
+      if (spaceId === selectedSpaceId && currentControl.pointIndex === selectedVertexIndex) {
+        const absPts = getPolygonAbsolutePoints(polygon);
+        if (absPts[selectedVertexIndex]) updateVertexHighlightPosition(absPts[selectedVertexIndex]);
+      }
+    }
     return true;
   }
 
@@ -819,10 +833,26 @@
     if (selectedSpaceId) {
       const poly = spaceIdToPolygon.get(selectedSpaceId);
       if (poly) {
+        // Vertex selection: click near a vertex toggles selected vertex
+        const absPtsPre = getPolygonAbsolutePoints(poly);
+        const pointerForVertex = canvas.getPointer(opt.e, false);
+        const vIdx = findClosestVertexIndex(absPtsPre, pointerForVertex, VERTEX_DRAG_RADIUS_PX);
+        if (vIdx != null) {
+          // Selecting a vertex clears edge selection
+          selectedEdgeIndex = null;
+          clearEdgeHighlight();
+          updateEdgePanelFromSelection();
+          setSelectedVertex(vIdx);
+          setStatus(`Vertex ${vIdx + 1} selected.`);
+        } else {
+          // Clicking outside vertices clears vertex selection
+          clearSelectedVertex();
+        }
       // If the pointer cursor is visible and we already have a hover edge, select it immediately
       const pointerVisibleEarly = (canvas.defaultCursor === "pointer") || (canvas.upperCanvasEl && canvas.upperCanvasEl.style && canvas.upperCanvasEl.style.cursor === "pointer");
       if (pointerVisibleEarly && hoverEdgeIndex != null) {
         const absPtsHover = getPolygonAbsolutePoints(poly);
+        clearSelectedVertex();
         selectedEdgeIndex = hoverEdgeIndex;
         highlightSelectedEdge(absPtsHover, selectedEdgeIndex);
         canvas.setActiveObject(poly);
@@ -831,7 +861,7 @@
         if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
         return;
       }
-        const absPts = getPolygonAbsolutePoints(poly);
+        const absPts = absPtsPre;
         // Avoid edge selection when near a vertex control
         const nearVertex = absPts.some(p => distance(pointer, p) <= Math.max(4, EDGE_HIT_BUFFER_PX * 0.6));
         let idx = nearVertex ? null : findClosestEdgeIndex(absPts, pointer, EDGE_HIT_BUFFER_PX);
@@ -851,6 +881,7 @@
             if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
             return; // require visible pointer prior to selection
           }
+          clearSelectedVertex();
           selectedEdgeIndex = idx;
           highlightSelectedEdge(absPts, idx);
           // Keep the polygon as the active object so Fabric doesn't fire selection:cleared
@@ -942,6 +973,7 @@
     // Deselect space
     selectedSpaceId = null;
     selectedEdgeIndex = null;
+    clearSelectedVertex();
     hoverEdgeIndex = null;
     clearEdgeHighlight();
     updateSpacePanel();
@@ -976,6 +1008,21 @@
     return null;
   }
 
+  function findClosestVertexIndex(points, clickPoint, tolerancePx) {
+    if (!Array.isArray(points) || points.length === 0) return null;
+    let bestIdx = null;
+    let bestDist = Infinity;
+    for (let i = 0; i < points.length; i++) {
+      const d = distance(clickPoint, points[i]);
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    if (bestDist <= tolerancePx) return bestIdx;
+    return null;
+  }
+
   let highlightedEdgeVisual = null;
   function highlightSelectedEdge(points, idx) {
     clearEdgeHighlight();
@@ -998,6 +1045,62 @@
       highlightedEdgeVisual = null;
       canvas.renderAll();
     }
+  }
+
+  // --------------------------
+  // Vertex selection visuals
+  // --------------------------
+  function clearVertexHighlight() {
+    if (selectedVertexVisual) {
+      canvas.remove(selectedVertexVisual);
+      selectedVertexVisual = null;
+      canvas.renderAll();
+    }
+  }
+
+  function drawVertexHighlightAt(point) {
+    clearVertexHighlight();
+    selectedVertexVisual = new fabric.Circle({
+      radius: Math.max(6, VERTEX_HANDLE_SIZE_PX * 0.6),
+      fill: COLOR_VERTEX_SELECTED_FILL,
+      stroke: COLOR_VERTEX_SELECTED_STROKE,
+      strokeWidth: 2,
+      left: point.x,
+      top: point.y,
+      originX: "center",
+      originY: "center",
+      selectable: false,
+      evented: false,
+    });
+    selectedVertexVisual.set("fpType", "vertexHighlight");
+    canvas.add(selectedVertexVisual);
+    selectedVertexVisual.bringToFront();
+    canvas.renderAll();
+  }
+
+  function updateVertexHighlightPosition(point) {
+    if (!selectedVertexVisual) return;
+    selectedVertexVisual.set({ left: point.x, top: point.y });
+    selectedVertexVisual.setCoords();
+    selectedVertexVisual.bringToFront();
+    canvas.renderAll();
+  }
+
+  function setSelectedVertex(index) {
+    selectedVertexIndex = index;
+    if (dom.btnDeleteVertex) dom.btnDeleteVertex.style.display = '';
+    const poly = selectedSpaceId ? spaceIdToPolygon.get(selectedSpaceId) : null;
+    if (poly) {
+      const pts = getPolygonAbsolutePoints(poly);
+      const p = pts[selectedVertexIndex];
+      if (p) drawVertexHighlightAt(p);
+    }
+  }
+
+  function clearSelectedVertex() {
+    selectedVertexIndex = null;
+    clearVertexHighlight();
+    if (dom.btnDeleteVertex) dom.btnDeleteVertex.style.display = 'none';
   }
 
   function setSpaceInputsEnabled(enabled) {
@@ -1026,6 +1129,7 @@
       selectedEdgeIndex = null;
       clearEdgeHighlight();
       hoverEdgeIndex = null;
+      clearSelectedVertex();
     }
     // Update fills
     canvas.getObjects().forEach(o => {
@@ -1058,6 +1162,10 @@
     if (dom.btnInsertVertex) {
       const show = !!space;
       dom.btnInsertVertex.style.display = show ? '' : 'none';
+    }
+    if (dom.btnDeleteVertex) {
+      const showDel = !!space && selectedVertexIndex != null;
+      dom.btnDeleteVertex.style.display = showDel ? '' : 'none';
     }
   }
 
@@ -1308,18 +1416,13 @@
       space.edges[edgeIdx + 1].direction = edgePropertiesToCopy.direction;
     }
     
-    // Update the polygon's points array in place
-    const pts = space.vertices.map(p => ({ x: p.x, y: p.y }));
-    const minX = Math.min(...pts.map(p => p.x));
-    const minY = Math.min(...pts.map(p => p.y));
-    const rel = pts.map(p => ({ x: p.x - minX, y: p.y - minY }));
-    
-    // Update polygon position and points
-    poly.set({
-      left: minX,
-      top: minY,
-      points: rel
+    // Update polygon points without changing left/top: convert absolute vertices to polygon local space
+    const invMat = fabric.util.invertTransform(poly.calcTransformMatrix());
+    const newPoints = space.vertices.map(v => {
+      const local = fabric.util.transformPoint(new fabric.Point(v.x, v.y), invMat);
+      return { x: local.x + poly.pathOffset.x, y: local.y + poly.pathOffset.y };
     });
+    poly.set({ points: newPoints });
     
     // Rebuild the vertex controls with new points array
     poly.controls = poly.points.reduce(function (acc, point, index) {
@@ -1335,15 +1438,11 @@
     // Capture absolute positions before dimension update
     const absPtsBefore = getPolygonAbsolutePoints(poly);
     
-    // Update polygon dimensions
+    // Update polygon dimensions and compensate for any shift (anchor by first absolute point)
     if (typeof poly._setPositionDimensions === 'function') {
       poly._setPositionDimensions({});
     }
-    
-    // Get absolute positions after recalculation
     const absPtsAfter = getPolygonAbsolutePoints(poly);
-    
-    // Compensate for any position shift
     if (absPtsBefore.length > 0 && absPtsAfter.length > 0) {
       const deltaX = absPtsBefore[0].x - absPtsAfter[0].x;
       const deltaY = absPtsBefore[0].y - absPtsAfter[0].y;
@@ -1653,10 +1752,11 @@
         canvas.defaultCursor = "default"; // Will change to crosshair when near an edge
         isInsertingVertex = true;
         dom.btnInsertVertex.classList.add('active');
-        // Deselect any currently selected edge
+        // Deselect any currently selected edge or vertex
         selectedEdgeIndex = null;
         hoverEdgeIndex = null;
         clearEdgeHighlight();
+        clearSelectedVertex();
         updateEdgePanelFromSelection();
         setStatus("Hover near an edge to insert a vertex.");
       }
@@ -1708,6 +1808,13 @@
   dom.btnDeleteSpace.addEventListener("click", () => {
     deleteSelectedSpace();
   });
+
+  // Delete Vertex button
+  if (dom.btnDeleteVertex) {
+    dom.btnDeleteVertex.addEventListener("click", () => {
+      deleteSelectedVertex();
+    });
+  }
 
   dom.btnExportExcel.addEventListener("click", () => {
     exportToExcel();
@@ -1782,6 +1889,10 @@
     if (nearVertex && !isInsertingVertex) { hoverEdgeIndex = null; canDragSelectedSpace = false; canvas.defaultCursor = "default"; return; }
     const idx = findClosestEdgeIndex(absPts, pointer, EDGE_HIT_BUFFER_PX);
     hoverEdgeIndex = (idx !== null) ? idx : null;
+    // Keep selected vertex highlight in sync
+    if (selectedVertexIndex != null && Array.isArray(absPts) && absPts[selectedVertexIndex]) {
+      updateVertexHighlightPosition(absPts[selectedVertexIndex]);
+    }
     
     // Insert vertex mode: show crosshair when near edge, default otherwise
     if (isInsertingVertex) {
@@ -1846,6 +1957,112 @@
     canvas.defaultCursor = "default";
   });
 
+  // Keep vertex highlight synced after polygon/object modifications
+  canvas.on("object:modified", function(opt){
+    const t = opt && opt.target;
+    if (!t || (t.get && t.get("fpType") !== "space")) return;
+    if (!selectedSpaceId || selectedVertexIndex == null) return;
+    const poly = spaceIdToPolygon.get(selectedSpaceId);
+    if (!poly) return;
+    const pts = getPolygonAbsolutePoints(poly);
+    if (Array.isArray(pts) && pts[selectedVertexIndex]) {
+      updateVertexHighlightPosition(pts[selectedVertexIndex]);
+    }
+  });
+
+  // --------------------------
+  // Delete selected vertex
+  // --------------------------
+  function deleteSelectedVertex() {
+    if (!selectedSpaceId || selectedVertexIndex == null) return;
+    const floor = activeFloor();
+    if (!floor) return;
+    const space = floor.spaces.find(s => s.id === selectedSpaceId);
+    if (!space) return;
+    if (!Array.isArray(space.vertices) || space.vertices.length <= 3) {
+      alert("A space must have at least 3 vertices.");
+      return;
+    }
+    const poly = spaceIdToPolygon.get(selectedSpaceId);
+    if (!poly) return;
+
+    // Preserve edges prior to mutation
+    ensureEdgeArrayForSpace(space);
+    const prevEdges = space.edges.slice();
+    const prevVertexCount = space.vertices.length;
+
+    // Remove the vertex
+    space.vertices.splice(selectedVertexIndex, 1);
+
+    // Rebuild polygon geometry from updated vertices without changing left/top
+    // Convert absolute vertices into polygon local space using inverse transform
+    const invMat = fabric.util.invertTransform(poly.calcTransformMatrix());
+    const newPoints = space.vertices.map(v => {
+      const local = fabric.util.transformPoint(new fabric.Point(v.x, v.y), invMat);
+      return {
+        x: local.x + poly.pathOffset.x,
+        y: local.y + poly.pathOffset.y,
+      };
+    });
+    poly.set({ points: newPoints });
+
+    // Rebuild controls
+    poly.controls = poly.points.reduce(function (acc, point, index) {
+      acc["p" + index] = new fabric.Control({
+        positionHandler: polygonPositionHandler(index),
+        actionHandler: anchorWrapper(index, actionHandler),
+        actionName: "modifyPolygon",
+        pointIndex: index
+      });
+      return acc;
+    }, {});
+
+    // Compensate for container resize like in vertex drag: anchor on pre-update absolute points
+    const absPtsBefore = getPolygonAbsolutePoints(poly);
+    if (typeof poly._setPositionDimensions === 'function') {
+      poly._setPositionDimensions({});
+    }
+    const absPtsAfter = getPolygonAbsolutePoints(poly);
+    if (absPtsBefore.length > 0 && absPtsAfter.length > 0) {
+      const deltaX = absPtsBefore[0].x - absPtsAfter[0].x;
+      const deltaY = absPtsBefore[0].y - absPtsAfter[0].y;
+      poly.left += deltaX;
+      poly.top += deltaY;
+    }
+    poly.setCoords();
+    poly.dirty = true;
+
+    // Persist corrected absolute positions back to space
+    const finalAbsPts = getPolygonAbsolutePoints(poly);
+    space.vertices = finalAbsPts.map(p => ({ x: p.x, y: p.y }));
+
+    // Rebuild edges and try to preserve merged edge properties
+    ensureEdgeArrayForSpace(space);
+    const newN = space.vertices.length;
+    const mergedIdx = (selectedVertexIndex - 1 + newN) % newN;
+    const leftOldIdx = (selectedVertexIndex - 1 + prevVertexCount) % prevVertexCount;
+    const candidate = prevEdges[leftOldIdx] || prevEdges[selectedVertexIndex % prevVertexCount];
+    if (space.edges[mergedIdx] && candidate) {
+      space.edges[mergedIdx].isExterior = !!candidate.isExterior;
+      space.edges[mergedIdx].height = clampNum(candidate.height);
+      space.edges[mergedIdx].winWidth = clampNum(candidate.winWidth);
+      space.edges[mergedIdx].winHeight = clampNum(candidate.winHeight);
+      space.edges[mergedIdx].direction = candidate.direction || "N";
+    }
+
+    // Recalculate derived values
+    recalcSpaceDerived(space);
+
+    // Clear selected vertex state after deletion
+    clearSelectedVertex();
+
+    // Keep polygon active
+    canvas.setActiveObject(poly);
+    canvas.renderAll();
+    saveState();
+    setStatus("Vertex deleted.");
+  }
+
   // --------------------------
   // Initialization
   // --------------------------
@@ -1892,6 +2109,7 @@
     setEdgeInputsEnabled(false);
     // Delete Space button visibility on load
     if (dom.btnDeleteSpace) dom.btnDeleteSpace.style.display = 'none';
+    if (dom.btnDeleteVertex) dom.btnDeleteVertex.style.display = 'none';
 
     // Keyboard panning with arrow keys (scroll the canvas holder)
     if (dom.canvasHolder) {
