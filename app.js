@@ -39,6 +39,7 @@
   // Configurable vertex drag/hover radius and handle size
   const VERTEX_DRAG_RADIUS_PX = 12;
   const VERTEX_HANDLE_SIZE_PX = 12;
+  const EDGE_HIGHLIGHT_THICKNESS_PX = 8; // thickness of selected edge overlay (filled rect)
   // Configurable proximity (in pixels) to close polygon by clicking near first vertex
   const SPACE_CLOSE_THRESHOLD_PX = 12;
 
@@ -1028,11 +1029,28 @@
     clearEdgeHighlight();
     const a = points[idx];
     const b = points[(idx + 1) % points.length];
-    highlightedEdgeVisual = new fabric.Line([a.x, a.y, b.x, b.y], {
-      stroke: COLOR_EDGE_SELECTED,
-      strokeWidth: 5,
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const cx = (a.x + b.x) / 2;
+    const cy = (a.y + b.y) / 2;
+    const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+    // Use a filled rotated rectangle so coverage is symmetric and fully occludes the underlying stroke
+    highlightedEdgeVisual = new fabric.Rect({
+      left: cx,
+      top: cy,
+      originX: "center",
+      originY: "center",
+      width: len,
+      height: EDGE_HIGHLIGHT_THICKNESS_PX,
+      rx: Math.min(EDGE_HIGHLIGHT_THICKNESS_PX / 2, 4),
+      ry: Math.min(EDGE_HIGHLIGHT_THICKNESS_PX / 2, 4),
+      angle: angleDeg,
+      fill: COLOR_EDGE_SELECTED,
+      stroke: null,
       selectable: false,
       evented: false,
+      objectCaching: false,
     });
     highlightedEdgeVisual.set("fpType", "edgeHighlight");
     canvas.add(highlightedEdgeVisual);
