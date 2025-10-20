@@ -425,7 +425,7 @@
       strokeWidth: 2,
       objectCaching: false,
       hasControls: true,
-      hasBorders: true,
+      hasBorders: false,
       selectable: true,
       perPixelTargetFind: true,
       hoverCursor: "default",
@@ -472,7 +472,7 @@
     // Based on Fabric polygon editing example
     polygon.edit = true;
     polygon.objectCaching = false;
-    polygon.hasBorders = true;
+    polygon.hasBorders = false;
     polygon.cornerColor = "#93c5fd"; // blue-300
     polygon.cornerStyle = "circle";
     polygon.cornerSize = VERTEX_HANDLE_SIZE_PX;
@@ -667,6 +667,30 @@
     const space = floor.spaces.find(s => s.id === spaceId);
     if (!space) return;
 
+    // Capture absolute positions of ALL vertices before container update
+    const absPtsBefore = getPolygonAbsolutePoints(poly);
+    
+    // Recompute container dimensions to encompass all vertices
+    if (typeof poly._setPositionDimensions === 'function') {
+      poly._setPositionDimensions({});
+    }
+    
+    // Get absolute positions after container recalculation
+    const absPtsAfter = getPolygonAbsolutePoints(poly);
+    
+    // Calculate how much the vertices shifted (use first vertex as reference)
+    if (absPtsBefore.length > 0 && absPtsAfter.length > 0) {
+      const deltaX = absPtsBefore[0].x - absPtsAfter[0].x;
+      const deltaY = absPtsBefore[0].y - absPtsAfter[0].y;
+      
+      // Compensate by adjusting the polygon's position
+      poly.left += deltaX;
+      poly.top += deltaY;
+    }
+    
+    poly.setCoords();
+    
+    // Now save the corrected absolute positions
     const absPts = getPolygonAbsolutePoints(poly);
     space.vertices = absPts.map(p => ({ x: p.x, y: p.y }));
     ensureEdgeArrayForSpace(space);
