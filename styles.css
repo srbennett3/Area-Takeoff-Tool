@@ -182,6 +182,12 @@ select:disabled {
   cursor: not-allowed;
 }
 
+/* Error state for required-but-empty inputs when selected */
+.input-error {
+  background: #1a1014 !important;
+  border-color: #6b1d26 !important;
+}
+
 /* Remove arrows from number inputs */
 input[type="number"] {
   -moz-appearance: textfield;
@@ -333,9 +339,10 @@ button.active {
   display: inline-block;
   border: 1px solid var(--border);
 }
-.swatch-space { background: rgba(16, 185, 129, 0.2); }
-.swatch-space-selected { background: rgba(37, 99, 235, 0.2); }
+.swatch-space { background: rgba(16, 185, 129, 0.5); }
+.swatch-space-selected { background: rgba(37, 99, 235, 0.5); }
 .swatch-edge-selected { background: rgba(255, 221, 87, 0.9); }
+.swatch-edge-exterior { background: #f59e0b; }
 
 /* Ensure canvas fits small screens */
 @media (max-width: 900px) {

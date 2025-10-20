@@ -32,8 +32,9 @@
   const COLOR_SPACE_SELECTED = "rgba(37, 99, 235, 0.18)"; // blueish
   const COLOR_SPACE_SELECTED_STROKE = "#2563eb";
   const COLOR_EDGE_SELECTED = "rgba(255,221,87,0.95)"; // yellow highlight
-  const COLOR_VERTEX_SELECTED_FILL = "#f59e0b"; // vertex highlight fill
-  const COLOR_VERTEX_SELECTED_STROKE = "#fbbf24"; // vertex highlight stroke
+  const COLOR_VERTEX_SELECTED_FILL = COLOR_EDGE_SELECTED; // match selected edge color
+  const COLOR_VERTEX_SELECTED_STROKE = COLOR_EDGE_SELECTED; // match selected edge color
+  const COLOR_EDGE_EXTERIOR = "#f59e0b"; // orange for exterior edges (persistent)
   // Configurable edge hover/selection buffer (in pixels in canvas space)
   const EDGE_HIT_BUFFER_PX = 6;
   // Configurable vertex drag/hover radius and handle size
@@ -302,9 +303,9 @@
         newEdges[i] = existing[i] || {
           id: uid("edge"),
           isExterior: false,
-          height: 0,
-          winWidth: 0,
-          winHeight: 0,
+          height: undefined,
+          winWidth: undefined,
+          winHeight: undefined,
           direction: "N",
           length: 0,
           winArea: 0,
@@ -501,7 +502,7 @@
 
     removeEdgeOverlaysForSpace(spaceId);
     const pts = getPolygonAbsolutePoints(poly);
-    const color = (selectedSpaceId === spaceId) ? COLOR_SPACE_SELECTED_STROKE : COLOR_SPACE_STROKE;
+    ensureEdgeArrayForSpace(space);
     for (let i = 0; i < pts.length; i++) {
       const a = pts[i];
       const b = pts[(i + 1) % pts.length];
@@ -511,6 +512,9 @@
       const cx = (a.x + b.x) / 2;
       const cy = (a.y + b.y) / 2;
       const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+      const edge = space.edges[i];
+      const isExterior = !!(edge && edge.isExterior);
+      const baseColor = isExterior ? COLOR_EDGE_EXTERIOR : ((selectedSpaceId === spaceId) ? COLOR_SPACE_SELECTED_STROKE : COLOR_SPACE_STROKE);
       const rect = new fabric.Rect({
         left: cx,
         top: cy,
@@ -519,7 +523,7 @@
         width: len,
         height: EDGE_OVERLAY_THICKNESS_PX,
         angle: angleDeg,
-        fill: color,
+        fill: baseColor,
         stroke: null,
         selectable: false,
         evented: false,
@@ -1306,12 +1310,20 @@
       dom.spaceCeiling.value = "";
       dom.spaceArea.textContent = "-";
       dom.spaceExteriorPerim.textContent = "-";
+      if (dom.spaceCeiling) dom.spaceCeiling.classList.remove('input-error');
       return;
     }
     dom.spaceName.value = space.name || "";
     dom.spaceCeiling.value = space.ceilingHeight ?? "";
     dom.spaceArea.textContent = formatWithUnit(space.area, true);
     dom.spaceExteriorPerim.textContent = formatWithUnit(space.exteriorPerimeter, false);
+    // Mark ceiling input error if selected space and empty
+    if (selectedSpaceId && space.id === selectedSpaceId) {
+      const empty = !(space.ceilingHeight || space.ceilingHeight === 0) ? true : (dom.spaceCeiling.value === "");
+      if (empty) dom.spaceCeiling.classList.add('input-error'); else dom.spaceCeiling.classList.remove('input-error');
+    } else {
+      dom.spaceCeiling.classList.remove('input-error');
+    }
   }
 
   function updateEdgePanelFromSelection() {
@@ -1325,33 +1337,54 @@
       dom.edgeLength.textContent = "-";
       dom.edgeWindowArea.textContent = "-";
       setEdgeInputsEnabled(false);
+      if (dom.edgeHeight) dom.edgeHeight.classList.remove('input-error');
+      if (dom.edgeWinWidth) dom.edgeWinWidth.classList.remove('input-error');
+      if (dom.edgeWinHeight) dom.edgeWinHeight.classList.remove('input-error');
       return;
     }
     // If a space is selected but no explicit edge index, keep inputs disabled until an edge is selected
     if (selectedEdgeIndex == null) {
+    // Reset to defaults when no edge is selected
+      dom.edgeIsExterior.checked = false;
+      dom.edgeHeight.value = "";
+      dom.edgeWinWidth.value = "";
+      dom.edgeWinHeight.value = "";
+      dom.edgeDirection.value = "N";
+      dom.edgeLength.textContent = "-";
+      dom.edgeWindowArea.textContent = "-";
       setEdgeInputsEnabled(false);
+    if (dom.edgeHeight) dom.edgeHeight.classList.remove('input-error');
+    if (dom.edgeWinWidth) dom.edgeWinWidth.classList.remove('input-error');
+    if (dom.edgeWinHeight) dom.edgeWinHeight.classList.remove('input-error');
       return;
     }
     const space = floor.spaces.find(s => s.id === selectedSpaceId);
     ensureEdgeArrayForSpace(space);
     const edge = space.edges[selectedEdgeIndex];
     dom.edgeIsExterior.checked = !!edge.isExterior;
-    dom.edgeHeight.value = edge.height ?? "";
-    dom.edgeWinWidth.value = edge.winWidth ?? "";
-    dom.edgeWinHeight.value = edge.winHeight ?? "";
+    dom.edgeHeight.value = (edge.height ?? "");
+    dom.edgeWinWidth.value = (edge.winWidth ?? "");
+    dom.edgeWinHeight.value = (edge.winHeight ?? "");
     dom.edgeDirection.value = edge.direction || "N";
     dom.edgeLength.textContent = formatWithUnit(edge.length, false);
-    dom.edgeWindowArea.textContent = formatWithUnit(edge.winArea, true);
+    dom.edgeWindowArea.textContent = formatWithUnit(edge.winArea, true, true);
     // Ensure the inputs are enabled when an edge is selected
     setEdgeInputsEnabled(true);
+    // Mark empty edge textboxes as error when an edge is selected
+    if (dom.edgeHeight) (dom.edgeHeight.value === "" ? dom.edgeHeight.classList.add('input-error') : dom.edgeHeight.classList.remove('input-error'));
+    if (dom.edgeWinWidth) (dom.edgeWinWidth.value === "" ? dom.edgeWinWidth.classList.add('input-error') : dom.edgeWinWidth.classList.remove('input-error'));
+    if (dom.edgeWinHeight) (dom.edgeWinHeight.value === "" ? dom.edgeWinHeight.classList.add('input-error') : dom.edgeWinHeight.classList.remove('input-error'));
   }
 
-  function formatWithUnit(value, isArea) {
+  function formatWithUnit(value, isArea, showZero = false) {
     const unit = unitAbbrev();
     const displayValRaw = isArea ? feet2ToDisplayArea(value) : feetToDisplayLength(value);
     const displayVal = roundToTenth(displayValRaw);
     const suffix = isArea ? ` ${unit}²` : ` ${unit}`;
-    return isFinite(displayVal) && displayVal > 0 ? `${toFixedSmart(displayVal)}${suffix}` : "-";
+    if (!isFinite(displayVal)) return "-";
+    if (displayVal > 0) return `${toFixedSmart(displayVal)}${suffix}`;
+    if (showZero && displayVal === 0) return `0${suffix}`;
+    return "-";
   }
 
   function updateUnitSuffixes() {
@@ -1374,7 +1407,10 @@
       space.exteriorPerimeter = 0;
       space.edges.forEach(e => {
         e.length = 0;
-        e.winArea = (clampNum(e.winWidth) * clampNum(e.winHeight)) || 0;
+        // Keep inputs blank when undefined; winArea should reflect only defined numbers
+        const w = clampNum(e.winWidth);
+        const h = clampNum(e.winHeight);
+        e.winArea = (isFinite(w) && isFinite(h) && w > 0 && h > 0) ? (w * h) : 0;
       });
       return;
     }
@@ -1391,7 +1427,11 @@
       const pxLen = distance(a, b);
       const edge = space.edges[i];
       edge.length = pxLen * scale;
-      edge.winArea = clampNum(edge.winWidth) * clampNum(edge.winHeight);
+      {
+        const w = clampNum(edge.winWidth);
+        const h = clampNum(edge.winHeight);
+        edge.winArea = (isFinite(w) && isFinite(h) && w > 0 && h > 0) ? (w * h) : 0;
+      }
       if (edge.isExterior) {
         exteriorPerim += edge.length;
       }
@@ -1720,13 +1760,20 @@
     if (!selectedSpaceId) return;
     const val = parseFloat(dom.spaceCeiling.value);
     if (!(val >= 0)) {
-      alert("Ceiling height must be a non-negative number.");
+      // revert to blank and mark error immediately
+      dom.spaceCeiling.value = "";
+      const floor0 = activeFloor();
+      const space0 = floor0?.spaces.find(s => s.id === selectedSpaceId);
+      if (space0) space0.ceilingHeight = undefined;
+      if (dom.spaceCeiling) dom.spaceCeiling.classList.add('input-error');
+      saveState();
       return;
     }
     const floor = activeFloor();
     const space = floor?.spaces.find(s => s.id === selectedSpaceId);
     if (!space) return;
     space.ceilingHeight = val;
+    if (dom.spaceCeiling) dom.spaceCeiling.classList.remove('input-error');
     saveState();
   });
 
@@ -1735,8 +1782,15 @@
     const floor = activeFloor();
     const space = floor?.spaces.find(s => s.id === selectedSpaceId);
     if (!space) return;
-    const val = parseFloat(dom.spaceCeiling.value);
-    space.ceilingHeight = isFinite(val) && val >= 0 ? val : 0;
+    const raw = dom.spaceCeiling.value;
+    const val = parseFloat(raw);
+    if (raw === "" || !isFinite(val) || val < 0) {
+      space.ceilingHeight = undefined;
+      if (dom.spaceCeiling) dom.spaceCeiling.classList.add('input-error');
+    } else {
+      space.ceilingHeight = val;
+      if (dom.spaceCeiling) dom.spaceCeiling.classList.remove('input-error');
+    }
     saveState();
   });
 
@@ -1745,6 +1799,9 @@
     if (!edge) return;
     edge.isExterior = !!dom.edgeIsExterior.checked;
     recalcSelectedSpaceAndRefresh();
+    // Refresh overlays so persistent exterior color applies immediately
+    const floor = activeFloor();
+    if (floor && selectedSpaceId) updateEdgeOverlaysForSpace(selectedSpaceId);
   });
 
   dom.edgeHeight.addEventListener("change", () => {
@@ -1752,7 +1809,10 @@
     if (!edge) return;
     const val = parseFloat(dom.edgeHeight.value);
     if (!(val >= 0)) {
-      alert("Wall height must be a non-negative number.");
+      // Revert to blank on invalid
+      dom.edgeHeight.value = "";
+      edge.height = undefined;
+      recalcSelectedSpaceAndRefresh();
       return;
     }
     edge.height = val;
@@ -1764,7 +1824,7 @@
     const edge = getSelectedEdge();
     if (!edge) return;
     const val = parseFloat(dom.edgeHeight.value);
-    edge.height = isFinite(val) && val >= 0 ? val : 0;
+    edge.height = isFinite(val) && val >= 0 ? val : undefined;
     recalcSelectedSpaceAndRefresh();
   });
 
@@ -1773,7 +1833,9 @@
     if (!edge) return;
     const val = parseFloat(dom.edgeWinWidth.value);
     if (!(val >= 0)) {
-      alert("Window width must be a non-negative number.");
+      dom.edgeWinWidth.value = "";
+      edge.winWidth = undefined;
+      recalcSelectedSpaceAndRefresh();
       return;
     }
     edge.winWidth = val;
@@ -1784,7 +1846,7 @@
     const edge = getSelectedEdge();
     if (!edge) return;
     const val = parseFloat(dom.edgeWinWidth.value);
-    edge.winWidth = isFinite(val) && val >= 0 ? val : 0;
+    edge.winWidth = isFinite(val) && val >= 0 ? val : undefined;
     recalcSelectedSpaceAndRefresh();
   });
 
@@ -1793,7 +1855,9 @@
     if (!edge) return;
     const val = parseFloat(dom.edgeWinHeight.value);
     if (!(val >= 0)) {
-      alert("Window height must be a non-negative number.");
+      dom.edgeWinHeight.value = "";
+      edge.winHeight = undefined;
+      recalcSelectedSpaceAndRefresh();
       return;
     }
     edge.winHeight = val;
@@ -1804,7 +1868,7 @@
     const edge = getSelectedEdge();
     if (!edge) return;
     const val = parseFloat(dom.edgeWinHeight.value);
-    edge.winHeight = isFinite(val) && val >= 0 ? val : 0;
+    edge.winHeight = isFinite(val) && val >= 0 ? val : undefined;
     recalcSelectedSpaceAndRefresh();
   });
 
