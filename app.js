@@ -551,18 +551,8 @@
     return function (eventData, transform, x, y) {
       const polygon = transform.target;
       const actionPerformed = fn(eventData, transform, x, y);
-      // After a vertex drag, refresh the polygon's bounding box while preserving position
-      const prevLeft = polygon.left;
-      const prevTop = polygon.top;
-      // This recomputes width/height based on updated points
-      if (typeof polygon._setPositionDimensions === 'function') {
-        polygon._setPositionDimensions({});
-      }
-      polygon.left = prevLeft;
-      polygon.top = prevTop;
-      polygon.dirty = true;
+      // Update corner coordinates without forcing Fabric to recompute dimensions/left/top
       polygon.setCoords();
-      if (polygon.canvas) polygon.canvas.requestRenderAll();
       return actionPerformed;
     };
   }
