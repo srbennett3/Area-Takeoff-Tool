@@ -70,6 +70,7 @@
     // Drawing
     btnDrawSpace: document.getElementById("btnDrawSpace"),
     btnDeleteSpace: document.getElementById("btnDeleteSpace"),
+    btnInsertVertex: document.getElementById("btnInsertVertex"),
     btnScaleDraw: document.getElementById("btnScaleDraw"),
     btnScaleToggle: document.getElementById("btnScaleToggle"),
 
@@ -184,6 +185,8 @@
   let isDrawingScale = false;
   let tempScalePoints = []; // 0 or 1 or 2 points during scale draw
   const SCALE_LINE_WIDTH = 8;
+
+  let isInsertingVertex = false; // insert vertex mode
 
   // Selected objects
   let selectedSpaceId = null;
@@ -603,8 +606,13 @@
   function cancelAllModes() {
     isDrawingSpace = false;
     isDrawingScale = false;
+    isInsertingVertex = false;
     // Reset cursor when leaving draw modes
     canvas.defaultCursor = "default";
+    // Unhighlight insert vertex button
+    if (dom.btnInsertVertex) {
+      dom.btnInsertVertex.classList.remove('active');
+    }
     // Turn off scale line editing
     canvas.getObjects().forEach(o => {
       if (o.get("fpType") === "scaleLine") {
@@ -788,6 +796,25 @@
       }
     }
 
+    // Insert vertex mode: only insert if crosshair cursor is visible (near an edge)
+    if (isInsertingVertex && selectedSpaceId) {
+      const isCrosshairVisible = (canvas.defaultCursor === "crosshair") || (canvas.upperCanvasEl && canvas.upperCanvasEl.style && canvas.upperCanvasEl.style.cursor === "crosshair");
+      if (isCrosshairVisible && hoverEdgeIndex !== null) {
+        insertVertexAtEdge(selectedSpaceId, hoverEdgeIndex, pointer);
+        // Exit insert vertex mode and unhighlight button
+        isInsertingVertex = false;
+        if (dom.btnInsertVertex) {
+          dom.btnInsertVertex.classList.remove('active');
+        }
+        setStatus("Vertex inserted.");
+        canvas.defaultCursor = "default";
+        return;
+      } else if (!isCrosshairVisible) {
+        // Clicked outside edge buffer - don't insert vertex
+        return;
+      }
+    }
+
     // Selection & dragging: only allow dragging when move cursor is visible
     if (selectedSpaceId) {
       const poly = spaceIdToPolygon.get(selectedSpaceId);
@@ -922,6 +949,15 @@
     setSpaceInputsEnabled(false);
     setEdgeInputsEnabled(false);
     if (dom.btnDeleteSpace) dom.btnDeleteSpace.style.display = 'none';
+    if (dom.btnInsertVertex) dom.btnInsertVertex.style.display = 'none';
+    // Cancel insert vertex mode if active
+    if (isInsertingVertex) {
+      isInsertingVertex = false;
+      if (dom.btnInsertVertex) {
+        dom.btnInsertVertex.classList.remove('active');
+      }
+      canvas.defaultCursor = "default";
+    }
   }
 
   function findClosestEdgeIndex(points, clickPoint, tolerancePx) {
@@ -1017,6 +1053,11 @@
     if (dom.btnDeleteSpace) {
       const show = !!space && canvas.getActiveObjects().length === 1;
       dom.btnDeleteSpace.style.display = show ? '' : 'none';
+    }
+    // Toggle Insert Vertex button visibility: only when a space is selected
+    if (dom.btnInsertVertex) {
+      const show = !!space;
+      dom.btnInsertVertex.style.display = show ? '' : 'none';
     }
   }
 
@@ -1211,6 +1252,122 @@
   // --------------------------
   // Space operations
   // --------------------------
+  function insertVertexAtEdge(spaceId, edgeIdx, clickPoint) {
+    const floor = activeFloor();
+    if (!floor) return;
+    const space = floor.spaces.find(s => s.id === spaceId);
+    if (!space) return;
+    
+    const poly = spaceIdToPolygon.get(spaceId);
+    if (!poly) return;
+    
+    // Get the two vertices of the edge
+    const v1 = space.vertices[edgeIdx];
+    const v2 = space.vertices[(edgeIdx + 1) % space.vertices.length];
+    
+    // Find the closest point on the edge to the click point
+    const A = { x: v1.x, y: v1.y };
+    const B = { x: v2.x, y: v2.y };
+    const P = { x: clickPoint.x, y: clickPoint.y };
+    const ABx = B.x - A.x, ABy = B.y - A.y;
+    const APx = P.x - A.x, APy = P.y - A.y;
+    const ab2 = ABx * ABx + ABy * ABy;
+    let t = 0.5; // default to midpoint
+    if (ab2 > 0) {
+      t = (APx * ABx + APy * ABy) / ab2;
+      t = Math.max(0, Math.min(1, t));
+    }
+    const newVertex = {
+      x: A.x + ABx * t,
+      y: A.y + ABy * t
+    };
+    
+    // Save the original edge properties before modifying the edges array
+    ensureEdgeArrayForSpace(space);
+    const originalEdge = space.edges[edgeIdx];
+    const edgePropertiesToCopy = {
+      isExterior: originalEdge.isExterior,
+      height: originalEdge.height,
+      winWidth: originalEdge.winWidth,
+      winHeight: originalEdge.winHeight,
+      direction: originalEdge.direction
+    };
+    
+    // Insert the new vertex after edgeIdx
+    space.vertices.splice(edgeIdx + 1, 0, newVertex);
+    
+    // Rebuild edge array (this will create a new edge at edgeIdx+1)
+    ensureEdgeArrayForSpace(space);
+    
+    // Copy properties from original edge to the new edge created by the split
+    if (space.edges[edgeIdx + 1]) {
+      space.edges[edgeIdx + 1].isExterior = edgePropertiesToCopy.isExterior;
+      space.edges[edgeIdx + 1].height = edgePropertiesToCopy.height;
+      space.edges[edgeIdx + 1].winWidth = edgePropertiesToCopy.winWidth;
+      space.edges[edgeIdx + 1].winHeight = edgePropertiesToCopy.winHeight;
+      space.edges[edgeIdx + 1].direction = edgePropertiesToCopy.direction;
+    }
+    
+    // Update the polygon's points array in place
+    const pts = space.vertices.map(p => ({ x: p.x, y: p.y }));
+    const minX = Math.min(...pts.map(p => p.x));
+    const minY = Math.min(...pts.map(p => p.y));
+    const rel = pts.map(p => ({ x: p.x - minX, y: p.y - minY }));
+    
+    // Update polygon position and points
+    poly.set({
+      left: minX,
+      top: minY,
+      points: rel
+    });
+    
+    // Rebuild the vertex controls with new points array
+    poly.controls = poly.points.reduce(function (acc, point, index) {
+      acc["p" + index] = new fabric.Control({
+        positionHandler: polygonPositionHandler(index),
+        actionHandler: anchorWrapper(index, actionHandler),
+        actionName: "modifyPolygon",
+        pointIndex: index
+      });
+      return acc;
+    }, {});
+    
+    // Capture absolute positions before dimension update
+    const absPtsBefore = getPolygonAbsolutePoints(poly);
+    
+    // Update polygon dimensions
+    if (typeof poly._setPositionDimensions === 'function') {
+      poly._setPositionDimensions({});
+    }
+    
+    // Get absolute positions after recalculation
+    const absPtsAfter = getPolygonAbsolutePoints(poly);
+    
+    // Compensate for any position shift
+    if (absPtsBefore.length > 0 && absPtsAfter.length > 0) {
+      const deltaX = absPtsBefore[0].x - absPtsAfter[0].x;
+      const deltaY = absPtsBefore[0].y - absPtsAfter[0].y;
+      poly.left += deltaX;
+      poly.top += deltaY;
+    }
+    
+    poly.setCoords();
+    poly.dirty = true;
+    
+    // Update space vertices with corrected absolute positions
+    const finalAbsPts = getPolygonAbsolutePoints(poly);
+    space.vertices = finalAbsPts.map(p => ({ x: p.x, y: p.y }));
+    
+    // Recalculate derived values
+    recalcSpaceDerived(space);
+    
+    // Ensure the polygon is still selected and active
+    canvas.setActiveObject(poly);
+    canvas.renderAll();
+    
+    saveState();
+  }
+
   function deleteSelectedSpace() {
     if (!selectedSpaceId) return;
     const floor = activeFloor();
@@ -1476,6 +1633,36 @@
     enterDrawSpaceMode();
   });
 
+  if (dom.btnInsertVertex) {
+    dom.btnInsertVertex.addEventListener("click", () => {
+      if (!selectedSpaceId) {
+        setStatus("Select a space first.");
+        return;
+      }
+      // Toggle insert vertex mode
+      if (isInsertingVertex) {
+        // Cancel insert vertex mode
+        isInsertingVertex = false;
+        dom.btnInsertVertex.classList.remove('active');
+        canvas.defaultCursor = "default";
+        setStatus("Insert vertex mode cancelled.");
+      } else {
+        // Enter insert vertex mode
+        isDrawingSpace = false;
+        isDrawingScale = false;
+        canvas.defaultCursor = "default"; // Will change to crosshair when near an edge
+        isInsertingVertex = true;
+        dom.btnInsertVertex.classList.add('active');
+        // Deselect any currently selected edge
+        selectedEdgeIndex = null;
+        hoverEdgeIndex = null;
+        clearEdgeHighlight();
+        updateEdgePanelFromSelection();
+        setStatus("Hover near an edge to insert a vertex.");
+      }
+    });
+  }
+
   if (dom.btnScaleDraw) {
     dom.btnScaleDraw.addEventListener("click", () => {
       const floor = activeFloor();
@@ -1592,9 +1779,23 @@
     const pointer = canvas.getPointer(opt.e, false); // canvas-space coords
     const absPts = getPolygonAbsolutePoints(poly);
     const nearVertex = absPts.some(p => distance(pointer, p) <= VERTEX_DRAG_RADIUS_PX);
-    if (nearVertex) { hoverEdgeIndex = null; canDragSelectedSpace = false; canvas.defaultCursor = "default"; return; }
+    if (nearVertex && !isInsertingVertex) { hoverEdgeIndex = null; canDragSelectedSpace = false; canvas.defaultCursor = "default"; return; }
     const idx = findClosestEdgeIndex(absPts, pointer, EDGE_HIT_BUFFER_PX);
     hoverEdgeIndex = (idx !== null) ? idx : null;
+    
+    // Insert vertex mode: show crosshair when near edge, default otherwise
+    if (isInsertingVertex) {
+      if (hoverEdgeIndex !== null) {
+        canvas.defaultCursor = "crosshair";
+      } else {
+        canvas.defaultCursor = "default";
+      }
+      if (canvas.upperCanvasEl && canvas.upperCanvasEl.style) {
+        canvas.upperCanvasEl.style.cursor = canvas.defaultCursor;
+      }
+      return;
+    }
+    
     if (hoverEdgeIndex !== null) {
       canDragSelectedSpace = false;
       canvas.defaultCursor = "pointer";

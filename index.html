@@ -48,6 +48,9 @@
             <button id="btnDrawSpace" aria-label="Draw new space polygon">Draw New Space</button>
             <button id="btnDeleteSpace" class="danger" aria-label="Delete selected space" style="display:none">Delete Space</button>
           </div>
+          <div class="row-buttons">
+            <button id="btnInsertVertex" aria-label="Insert vertex on selected space" style="display:none">Insert Vertex</button>
+          </div>
         </section>
 
         <section class="panel" aria-labelledby="scale-title">
@@ -128,9 +131,6 @@
               <option value="W">W</option>
               <option value="NW">NW</option>
             </select>
-          </div>
-          <div class="row-buttons">
-            <button id="btnSplitEdge" aria-label="Split the selected wall edge" disabled>Split Wall</button>
           </div>
           <div class="readonly-list">
             <div><span class="label">Wall Length:</span> <span id="edgeLength">-</span></div>
