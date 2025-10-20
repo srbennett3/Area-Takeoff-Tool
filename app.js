@@ -40,6 +40,8 @@
   const VERTEX_DRAG_RADIUS_PX = 12;
   const VERTEX_HANDLE_SIZE_PX = 12;
   const EDGE_HIGHLIGHT_THICKNESS_PX = 8; // thickness of selected edge overlay (filled rect)
+  const EDGE_OVERLAY_THICKNESS_PX = 2; // base edge visual thickness (filled rects replacing stroke)
+  const TEMP_EDGE_THICKNESS_PX = 2; // thickness for temp draw segments
   // Configurable proximity (in pixels) to close polygon by clicking near first vertex
   const SPACE_CLOSE_THRESHOLD_PX = 12;
 
@@ -431,8 +433,8 @@
       left: minX,
       top: minY,
       fill: COLOR_SPACE,
-      stroke: COLOR_SPACE_STROKE,
-      strokeWidth: 2,
+      stroke: null, // disable stroke; we render edges as precise overlays
+      strokeWidth: 0,
       objectCaching: false,
       hasControls: true,
       hasBorders: false,
@@ -448,6 +450,8 @@
     spaceIdToPolygon.set(space.id, poly);
 
     enablePolygonVertexEditing(poly);
+    // Draw edge overlays replacing polygon stroke
+    updateEdgeOverlaysForSpace(space.id);
     return poly;
   }
 
@@ -464,14 +468,75 @@
     // Clear existing polygons
     const toRemove = canvas.getObjects().filter(o => o.get("fpType") === "space");
     toRemove.forEach(o => canvas.remove(o));
+    // Remove existing edge overlays
+    const overlays = canvas.getObjects().filter(o => o.get && o.get("fpType") === "edgeOverlay");
+    overlays.forEach(o => canvas.remove(o));
     polygonIdToSpaceId.clear();
     spaceIdToPolygon.clear();
 
     floor.spaces.forEach(space => {
       addPolygonForSpace(space);
+      updateEdgeOverlaysForSpace(space.id);
     });
     // After polygons, draw scale line overlay
     drawScaleLineForFloor(floor);
+    canvas.renderAll();
+  }
+
+  // --------------------------
+  // Edge overlays (replace polygon stroke with precise rectangles)
+  // --------------------------
+  function removeEdgeOverlaysForSpace(spaceId) {
+    const toRemove = canvas.getObjects().filter(o => o.get && o.get("fpType") === "edgeOverlay" && o.get("spaceId") === spaceId);
+    toRemove.forEach(o => canvas.remove(o));
+  }
+
+  function updateEdgeOverlaysForSpace(spaceId) {
+    const floor = activeFloor();
+    if (!floor) return;
+    const space = floor.spaces.find(s => s.id === spaceId);
+    if (!space) return;
+    const poly = spaceIdToPolygon.get(spaceId);
+    if (!poly) return;
+
+    removeEdgeOverlaysForSpace(spaceId);
+    const pts = getPolygonAbsolutePoints(poly);
+    const color = (selectedSpaceId === spaceId) ? COLOR_SPACE_SELECTED_STROKE : COLOR_SPACE_STROKE;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      const cx = (a.x + b.x) / 2;
+      const cy = (a.y + b.y) / 2;
+      const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+      const rect = new fabric.Rect({
+        left: cx,
+        top: cy,
+        originX: "center",
+        originY: "center",
+        width: len,
+        height: EDGE_OVERLAY_THICKNESS_PX,
+        angle: angleDeg,
+        fill: color,
+        stroke: null,
+        selectable: false,
+        evented: false,
+        objectCaching: false,
+      });
+      rect.set("fpType", "edgeOverlay");
+      rect.set("spaceId", spaceId);
+      rect.set("edgeIndex", i);
+      canvas.add(rect);
+    }
+    // Ensure selection visuals stay on top of overlays
+    if (highlightedEdgeVisual) {
+      highlightedEdgeVisual.bringToFront();
+    }
+    if (selectedVertexVisual) {
+      selectedVertexVisual.bringToFront();
+    }
     canvas.renderAll();
   }
 
@@ -676,6 +741,7 @@
       canvas.setActiveObject(poly);
     }
     selectSpace(space.id);
+    updateEdgeOverlaysForSpace(space.id);
     canvas.requestRenderAll();
     isDrawingSpace = false;
     setStatus("Space created. Select edges by clicking near them.");
@@ -719,6 +785,8 @@
     ensureEdgeArrayForSpace(space);
     recalcSpaceDerived(space);
     updateSpacePanel(space);
+    // Refresh overlays after any geometry change
+    updateEdgeOverlaysForSpace(space.id);
     saveState();
   }
 
@@ -752,8 +820,8 @@
       const circ = new fabric.Circle({
         radius: 3,
         fill: "#93c5fd",
-        left: pointer.x,
-        top: pointer.y,
+        left: pointer.x, // center at cursor
+        top: pointer.y,  // center at cursor
         originX: "center",
         originY: "center",
         selectable: false,
@@ -764,14 +832,28 @@
 
       if (tempDrawPoints.length > 0) {
         const prev = tempDrawPoints[tempDrawPoints.length - 1];
-        const line = new fabric.Line([prev.x, prev.y, pointer.x, pointer.y], {
-          stroke: "#60a5fa",
-          strokeWidth: 2,
+        const dx = pointer.x - prev.x;
+        const dy = pointer.y - prev.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        const cx = (prev.x + pointer.x) / 2;
+        const cy = (prev.y + pointer.y) / 2;
+        const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+        const seg = new fabric.Rect({
+          left: cx,
+          top: cy,
+          originX: "center",
+          originY: "center",
+          width: len,
+          height: TEMP_EDGE_THICKNESS_PX,
+          angle: angleDeg,
+          fill: "#60a5fa",
+          stroke: null,
           selectable: false,
           evented: false,
+          objectCaching: false,
         });
-        canvas.add(line);
-        tempDrawLines.push(line);
+        canvas.add(seg);
+        tempDrawLines.push(seg);
       }
       tempDrawPoints.push({ x: pointer.x, y: pointer.y });
       canvas.renderAll();
@@ -977,6 +1059,11 @@
     clearSelectedVertex();
     hoverEdgeIndex = null;
     clearEdgeHighlight();
+    // Keep edge overlays visible; refresh to base color when nothing is selected
+    const floor = activeFloor();
+    if (floor && Array.isArray(floor.spaces)) {
+      floor.spaces.forEach(s => updateEdgeOverlaysForSpace(s.id));
+    }
     updateSpacePanel();
     updateEdgePanelFromSelection();
     setSpaceInputsEnabled(false);
@@ -1055,6 +1142,8 @@
     highlightedEdgeVisual.set("fpType", "edgeHighlight");
     canvas.add(highlightedEdgeVisual);
     highlightedEdgeVisual.bringToFront();
+    // Keep vertex highlight above selected edge as well
+    if (selectedVertexVisual) selectedVertexVisual.bringToFront();
     canvas.renderAll();
   }
   function clearEdgeHighlight() {
@@ -1154,14 +1243,18 @@
       if (o.get("fpType") === "space") {
         if (o.get("spaceId") === spaceId) {
           o.set("fill", COLOR_SPACE_SELECTED);
-          o.set("stroke", COLOR_SPACE_SELECTED_STROKE);
         } else {
           o.set("fill", COLOR_SPACE);
-          o.set("stroke", COLOR_SPACE_STROKE);
         }
       }
     });
     canvas.renderAll();
+
+    // Refresh edge overlays colors/geometry for all spaces
+    const floorForOverlays = activeFloor();
+    if (floorForOverlays && Array.isArray(floorForOverlays.spaces)) {
+      floorForOverlays.spaces.forEach(s => updateEdgeOverlaysForSpace(s.id));
+    }
 
     // Update panel
     const floor = activeFloor();
@@ -1477,6 +1570,8 @@
     
     // Recalculate derived values
     recalcSpaceDerived(space);
+    // Update edge overlays for this space
+    updateEdgeOverlaysForSpace(spaceId);
     
     // Ensure the polygon is still selected and active
     canvas.setActiveObject(poly);
@@ -1501,6 +1596,8 @@
       spaceIdToPolygon.delete(space.id);
     }
     floor.spaces = floor.spaces.filter(s => s.id !== space.id);
+    // Remove overlays for this space
+    removeEdgeOverlaysForSpace(space.id);
     selectedSpaceId = null;
     selectedEdgeIndex = null;
     clearEdgeHighlight();
@@ -1904,6 +2001,8 @@
     const pointer = canvas.getPointer(opt.e, false); // canvas-space coords
     const absPts = getPolygonAbsolutePoints(poly);
     const nearVertex = absPts.some(p => distance(pointer, p) <= VERTEX_DRAG_RADIUS_PX);
+    // Keep edge overlays perfectly aligned during hover/move
+    updateEdgeOverlaysForSpace(selectedSpaceId);
     if (nearVertex && !isInsertingVertex) { hoverEdgeIndex = null; canDragSelectedSpace = false; canvas.defaultCursor = "default"; return; }
     const idx = findClosestEdgeIndex(absPts, pointer, EDGE_HIT_BUFFER_PX);
     hoverEdgeIndex = (idx !== null) ? idx : null;
@@ -2070,6 +2169,8 @@
 
     // Recalculate derived values
     recalcSpaceDerived(space);
+    // Update edge overlays for this space
+    updateEdgeOverlaysForSpace(selectedSpaceId);
 
     // Clear selected vertex state after deletion
     clearSelectedVertex();
