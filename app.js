@@ -38,8 +38,8 @@
   const EDGE_HIT_BUFFER_PX = 6;
   // Configurable vertex drag/hover radius and handle size
   const VERTEX_DRAG_RADIUS_PX = 12;
-  const VERTEX_HANDLE_SIZE_PX = 12;
-  const EDGE_HIGHLIGHT_THICKNESS_PX = 8; // thickness of selected edge overlay (filled rect)
+  const VERTEX_HANDLE_SIZE_PX = 10;
+  const EDGE_HIGHLIGHT_THICKNESS_PX = 6; // thickness of selected edge overlay (filled rect)
   const EDGE_OVERLAY_THICKNESS_PX = 2; // base edge visual thickness (filled rects replacing stroke)
   const TEMP_EDGE_THICKNESS_PX = 2; // thickness for temp draw segments
   // Configurable proximity (in pixels) to close polygon by clicking near first vertex
