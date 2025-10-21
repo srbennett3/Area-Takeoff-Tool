@@ -35,14 +35,30 @@ html, body {
   padding: 12px 16px;
   background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.00));
   border-bottom: 1px solid var(--border);
+  position: sticky;
+  z-index: 100;
+}
+
+.app-header {
+  top: 0;
+  background: var(--bg);
+  z-index: 101;
 }
 
 .app-footer {
+  bottom: 0;
+  background: var(--bg);
   border-top: 1px solid var(--border);
   border-bottom: none;
   font-size: 12px;
   color: var(--muted);
-  justify-content: center;
+  justify-content: space-between;
+}
+
+.app-footer span {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .brand {
@@ -140,25 +156,16 @@ html, body {
 }
 
 .app-main {
-  display: grid;
-  grid-template-columns: 400px 1fr;
-  gap: 12px;
-  padding: 12px;
-  align-items: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
   height: 100%;
+  position: relative;
+  overflow-y: auto;
 }
 
-.sidebar {
-  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.00));
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px;
-  overflow: auto;
-  height: 100%;
-  min-height: 100%;
-  align-self: stretch;
-  position: relative;
-}
+/* Sidebar no longer used - replaced with overlay panels */
 
 .panel {
   background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.00));
@@ -300,31 +307,82 @@ button.active {
 }
 
 .canvas-wrap {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
   min-height: 0;
+  position: relative;
 }
 
 .canvas-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.00));
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 8px 10px;
-  margin-bottom: 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 16px;
+  z-index: 100;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+}
+
+.tab-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.tab-btn {
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tab-btn:hover {
+  background: rgba(255,255,255,0.05);
+  border-color: var(--border);
+}
+
+.tab-btn.active {
+  background: var(--primary);
+  border-color: rgba(255,255,255,0.1);
+  color: #fff;
 }
 
 .canvas-holder {
   position: relative;
   overflow: auto;
+  background: repeating-conic-gradient(from 45deg, #0b1324 0% 25%, #0a1020 0% 50%) 50% / 20px 20px;
+  flex: 1;
+  -webkit-overflow-scrolling: touch;
+  padding: 0; /* no built-in padding */
+}
+
+/* Overlay panel system */
+.overlay-panel {
+  position: fixed;
+  top: 125px; /* header height + toolbar height to bottom of toolbar bar */
+  left: 0;
+  width: 380px;
+  max-height: calc(100vh - 200px);
+  background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: repeating-conic-gradient(from 45deg, #0b1324 0% 25%, #0a1020 0% 50%) 50% / 20px 20px;
-  height: 100%;
-  -webkit-overflow-scrolling: touch;
+  padding: 12px;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  z-index: 100;
+  display: none;
+}
+
+.overlay-panel.visible {
+  display: block;
 }
 
 #floorCanvas {
@@ -335,14 +393,9 @@ button.active {
 }
 
 .app-credit {
-  position: fixed;
-  left: 12px;
-  bottom: 12px;
   font-size: 12px;
   color: var(--muted);
   opacity: 0.8;
-  pointer-events: none;
-  z-index: 10;
 }
 
 .status {
@@ -442,5 +495,39 @@ button.active {
   font-size: 11px;
   padding: 5px 10px;
   width: 100%;
+}
+
+/* Spaces list */
+.space-list-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.space-list-btn {
+  flex: 1;
+  text-align: left;
+  font-size: 13px;
+  padding: 8px 12px;
+  transition: background 0.15s ease;
+}
+.space-list-btn:hover {
+  background: rgba(255,255,255,0.05);
+}
+.space-list-btn.active {
+  background: var(--primary);
+  color: #fff;
+}
+
+.space-item-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.space-action-btn {
+  font-size: 11px;
+  padding: 6px 10px;
+  white-space: nowrap;
 }
 

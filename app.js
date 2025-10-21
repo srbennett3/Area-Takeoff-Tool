@@ -63,7 +63,10 @@
   const dom = {
     canvasEl: document.getElementById("floorCanvas"),
     canvasHolder: document.getElementById("canvasHolder"),
-    statusText: document.getElementById("statusText"),
+    spacesList: document.getElementById("spacesList"),
+    spacesActions: document.getElementById("spacesActions"),
+    btnEditSpace: document.getElementById("btnEditSpace"),
+    btnDeleteSpaceFromList: document.getElementById("btnDeleteSpaceFromList"),
     // Project
     projectName: document.getElementById("projectName"),
 
@@ -294,7 +297,7 @@
   // UI helpers
   // --------------------------
   function setStatus(text) {
-    dom.statusText.textContent = text;
+    // Status text removed from UI - silently ignore
   }
 
   function setProjectNameUI(name) {
@@ -379,17 +382,19 @@
   // Fabric helpers
   // --------------------------
   function fitBackgroundImageToCanvas(img, floor) {
-    // Compute scale to fit within canvas dimensions
+    // Compute scale to fit within canvas dimensions with left buffer
+    const PANEL_BUFFER = 380;
     const canvasW = canvas.getWidth();
     const canvasH = canvas.getHeight();
     const imgW = img.width;
     const imgH = img.height;
-    const scale = Math.min(canvasW / imgW, canvasH / imgH);
+    const availableW = canvasW - PANEL_BUFFER;
+    const scale = Math.min(availableW / imgW, canvasH / imgH);
     img.scaleX = scale;
     img.scaleY = scale;
     img.originX = "left";
     img.originY = "top";
-    img.left = (canvasW - imgW * scale) / 2;
+    img.left = PANEL_BUFFER + (availableW - imgW * scale) / 2;
     img.top = (canvasH - imgH * scale) / 2;
 
     floor.backgroundFit = {
@@ -821,6 +826,7 @@
     updateEdgeOverlaysForSpace(space.id);
     canvas.requestRenderAll();
     isDrawingSpace = false;
+    renderSpacesList();
     setStatus("Space created. Select edges by clicking near them.");
     saveState();
   }
@@ -1390,6 +1396,8 @@
     const spacePanel = document.getElementById('panel-space');
     if (edgePanel) edgePanel.style.display = (selectedEdgeIndex != null) ? '' : 'none';
     if (spacePanel) spacePanel.style.display = (!!space) ? '' : 'none';
+    // Update spaces list
+    renderSpacesList();
   }
 
   // --------------------------
@@ -1625,6 +1633,7 @@
     updateUnitSuffixes();
     selectedSpaceId = null;
     selectedEdgeIndex = null;
+    renderSpacesList();
     setStatus(`Loaded floor "${floor.name}".`);
   }
 
@@ -1786,6 +1795,7 @@
     clearEdgeHighlight();
     updateSpacePanel();
     updateEdgePanelFromSelection();
+    renderSpacesList();
     saveState();
     setStatus("Space deleted.");
   }
@@ -2397,14 +2407,134 @@
     renderTypeManager();
   });
 
-  // Type Manager collapse/expand
-  const typeMgrTitle = document.getElementById('type-mgr-title');
-  const typeMgrContent = document.getElementById('type-mgr-content');
-  if (typeMgrTitle && typeMgrContent) {
-    typeMgrTitle.addEventListener('click', () => {
-      const isCollapsed = typeMgrContent.classList.toggle('collapsed');
-      const icon = typeMgrTitle.querySelector('.collapse-icon');
-      if (icon) icon.textContent = isCollapsed ? '▶' : '▼';
+  // Tab system for overlay panels
+  let activeTab = null;
+  const tabMapping = {
+    'tab-floors': 'overlay-floors',
+    'tab-spaces': 'overlay-spaces',
+    'tab-types': 'overlay-types',
+    'tab-properties': 'overlay-properties',
+    'tab-drawing': 'overlay-drawing',
+    'tab-scale': 'overlay-scale'
+  };
+
+  function showTab(tabId) {
+    const overlayId = tabMapping[tabId];
+    if (!overlayId) return;
+    
+    // Toggle if clicking active tab
+    if (activeTab === tabId) {
+      hideAllTabs();
+      return;
+    }
+    
+    // Hide all panels and deactivate tabs
+    Object.keys(tabMapping).forEach(tId => {
+      const btn = document.getElementById(tId);
+      const panel = document.getElementById(tabMapping[tId]);
+      if (btn) btn.classList.remove('active');
+      if (panel) panel.classList.remove('visible');
+    });
+    
+    // Show selected tab and panel
+    const tabBtn = document.getElementById(tabId);
+    const panel = document.getElementById(overlayId);
+    if (tabBtn) tabBtn.classList.add('active');
+    if (panel) panel.classList.add('visible');
+    activeTab = tabId;
+  }
+
+  function hideAllTabs() {
+    Object.keys(tabMapping).forEach(tId => {
+      const btn = document.getElementById(tId);
+      const panel = document.getElementById(tabMapping[tId]);
+      if (btn) btn.classList.remove('active');
+      if (panel) panel.classList.remove('visible');
+    });
+    activeTab = null;
+  }
+
+  // Wire tab buttons
+  Object.keys(tabMapping).forEach(tabId => {
+    const btn = document.getElementById(tabId);
+    if (btn) {
+      btn.addEventListener('click', () => showTab(tabId));
+    }
+  });
+
+  // Render Spaces list
+  function renderSpacesList() {
+    if (!dom.spacesList) return;
+    dom.spacesList.innerHTML = '';
+    const floor = activeFloor();
+    if (!floor || !floor.spaces || floor.spaces.length === 0) {
+      dom.spacesList.innerHTML = '<div class="hint">No spaces created yet.</div>';
+      if (dom.spacesActions) dom.spacesActions.style.display = 'none';
+      return;
+    }
+    floor.spaces.forEach(space => {
+      // Create wrapper for space item
+      const itemDiv = document.createElement('div');
+      itemDiv.className = 'space-list-item';
+      
+      const btn = document.createElement('button');
+      btn.textContent = space.name || 'Room';
+      btn.className = 'space-list-btn';
+      if (selectedSpaceId === space.id) btn.classList.add('active');
+      btn.addEventListener('click', () => {
+        const poly = spaceIdToPolygon.get(space.id);
+        if (poly) {
+          canvas.setActiveObject(poly);
+          selectSpace(space.id);
+          canvas.renderAll();
+        }
+      });
+      itemDiv.appendChild(btn);
+      
+      // Add action buttons if selected
+      if (selectedSpaceId === space.id) {
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'space-item-actions';
+        
+        const editBtn = document.createElement('button');
+        editBtn.textContent = 'Edit';
+        editBtn.className = 'space-action-btn';
+        editBtn.addEventListener('click', () => {
+          showTab('tab-properties');
+        });
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = 'Delete';
+        deleteBtn.className = 'space-action-btn danger';
+        deleteBtn.addEventListener('click', () => {
+          deleteSelectedSpace();
+        });
+        
+        actionsDiv.appendChild(editBtn);
+        actionsDiv.appendChild(deleteBtn);
+        itemDiv.appendChild(actionsDiv);
+      }
+      
+      dom.spacesList.appendChild(itemDiv);
+    });
+    // Hide the old actions container (no longer needed)
+    if (dom.spacesActions) {
+      dom.spacesActions.style.display = 'none';
+    }
+  }
+
+  // Spaces panel Edit and Delete buttons
+  if (dom.btnEditSpace) {
+    dom.btnEditSpace.addEventListener("click", () => {
+      if (selectedSpaceId) {
+        showTab('tab-properties');
+      }
+    });
+  }
+
+  if (dom.btnDeleteSpaceFromList) {
+    dom.btnDeleteSpaceFromList.addEventListener("click", () => {
+      deleteSelectedSpace();
     });
   }
 

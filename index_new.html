@@ -28,24 +28,24 @@
     </header>
 
     <main class="app-main">
-      <div class="canvas-toolbar">
-        <div class="tab-buttons">
-          <button class="tab-btn" id="tab-floors">Floors</button>
-          <button class="tab-btn" id="tab-spaces">Spaces</button>
-          <button class="tab-btn" id="tab-types">Types</button>
-          <button class="tab-btn" id="tab-properties">Properties</button>
-          <button class="tab-btn" id="tab-drawing">Drawing Tools</button>
-          <button class="tab-btn" id="tab-scale">Scale</button>
-        </div>
-        <div class="legend" title="Selection colors">
-          <span class="swatch swatch-space" aria-label="Space color"></span><span>Space</span>
-          <span class="swatch swatch-space-selected" aria-label="Selected space color"></span><span>Selected Space</span>
-          <span class="swatch swatch-edge-selected" aria-label="Selected edge color"></span><span>Selected Edge</span>
-          <span class="swatch swatch-edge-exterior" aria-label="Exterior edge color"></span><span>Exterior Edge</span>
-        </div>
-      </div>
-
       <section class="canvas-wrap" aria-label="Canvas Area">
+        <div class="canvas-toolbar">
+          <div class="tab-buttons">
+            <button class="tab-btn" id="tab-floors">Floors</button>
+            <button class="tab-btn" id="tab-spaces">Spaces</button>
+            <button class="tab-btn" id="tab-types">Types</button>
+            <button class="tab-btn" id="tab-properties">Properties</button>
+            <button class="tab-btn" id="tab-drawing">Drawing Tools</button>
+            <button class="tab-btn" id="tab-scale">Scale</button>
+          </div>
+          <div class="legend" title="Selection colors">
+            <span class="swatch swatch-space" aria-label="Space color"></span><span>Space</span>
+            <span class="swatch swatch-space-selected" aria-label="Selected space color"></span><span>Selected Space</span>
+            <span class="swatch swatch-edge-selected" aria-label="Selected edge color"></span><span>Selected Edge</span>
+            <span class="swatch swatch-edge-exterior" aria-label="Exterior edge color"></span><span>Exterior Edge</span>
+          </div>
+        </div>
+
         <!-- Overlay Panels -->
         <div class="overlay-panel" id="overlay-floors">
           <h3>Floors</h3>
@@ -64,10 +64,6 @@
         <div class="overlay-panel" id="overlay-spaces">
           <h3>Spaces</h3>
           <div id="spacesList"></div>
-          <div class="row-buttons" id="spacesActions" style="display:none; margin-top: 12px;">
-            <button id="btnEditSpace" aria-label="Edit selected space">Edit</button>
-            <button id="btnDeleteSpaceFromList" class="danger" aria-label="Delete selected space">Delete</button>
-          </div>
         </div>
 
         <div class="overlay-panel" id="overlay-types">
@@ -235,9 +231,9 @@
     </main>
 
     <footer class="app-footer">
-      <div class="app-credit" aria-hidden="true">Created by Steven Bennett 2025</div>
       <span>All data stored locally in your browser.</span>
     </footer>
+  <div class="app-credit" aria-hidden="true">Created by Steven Bennett 2025</div>
   </div>
 
   <script>
