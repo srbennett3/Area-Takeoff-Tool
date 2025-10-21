@@ -420,6 +420,7 @@ button.active {
 .swatch-space-selected { background: rgba(37, 99, 235, 0.5); }
 .swatch-edge-selected { background: rgba(255, 221, 87, 0.9); }
 .swatch-edge-exterior { background: #f59e0b; }
+.swatch-ceiling { background: rgba(168, 85, 247, 0.5); }
 
 /* Ensure canvas fits small screens */
 @media (max-width: 900px) {

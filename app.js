@@ -35,6 +35,9 @@
   const COLOR_VERTEX_SELECTED_FILL = COLOR_EDGE_SELECTED; // match selected edge color
   const COLOR_VERTEX_SELECTED_STROKE = COLOR_EDGE_SELECTED; // match selected edge color
   const COLOR_EDGE_EXTERIOR = "#f59e0b"; // orange for exterior edges (persistent)
+  const COLOR_CEILING = "rgba(168, 85, 247, 0.18)"; // purple for ceiling
+  const COLOR_CEILING_STROKE = "#a855f7"; // purple stroke
+  const COLOR_CEILING_SELECTED = "rgba(168, 85, 247, 0.25)"; // selected ceiling
   // Configurable edge hover/selection buffer (in pixels in canvas space)
   const EDGE_HIT_BUFFER_PX = 6;
   // Configurable vertex drag/hover radius and handle size
@@ -95,6 +98,18 @@
     spaceArea: document.getElementById("spaceArea"),
     spaceExteriorPerim: document.getElementById("spaceExteriorPerim"),
     spaceCeilingUnit: document.getElementById("spaceCeilingUnit"),
+    spaceCeilingArea: document.getElementById("spaceCeilingArea"),
+    
+    // Ceiling controls
+    ceilingSameAsFloor: document.getElementById("ceilingSameAsFloor"),
+    ceilingControlsRow: document.getElementById("ceilingControlsRow"),
+    btnDrawCeiling: document.getElementById("btnDrawCeiling"),
+    btnToggleCeilingVisibility: document.getElementById("btnToggleCeilingVisibility"),
+    btnDeleteCeiling: document.getElementById("btnDeleteCeiling"),
+    ceilingManualEntry: document.getElementById("ceilingManualEntry"),
+    ceilingManualInputRow: document.getElementById("ceilingManualInputRow"),
+    ceilingManualArea: document.getElementById("ceilingManualArea"),
+    ceilingManualAreaUnit: document.getElementById("ceilingManualAreaUnit"),
 
     // Edge props
     edgeIsExterior: document.getElementById("edgeIsExterior"),
@@ -206,7 +221,7 @@
   const AppState = {
     projectName: "",
     displayUnit: "feet",
-    floors: [], // [{ id, name, imageSrc, backgroundFit, scale: { realLen, pixelLen, unit, line }, spaces: [Space] }]
+    floors: [], // [{ id, name, imageSrc, backgroundFit, scale: { realLenFeet, pixelLen, unit, line }, spaces: [Space] }]
     activeFloorId: null,
     types: {
       wall: [{ id: uid("walltype"), name: "Wall Type 1" }],
@@ -237,6 +252,11 @@
   const COLOR_SCALE = "#ef4444"; // red
 
   let isInsertingVertex = false; // insert vertex mode
+  
+  let isDrawingCeiling = false; // ceiling drawing mode
+  let tempCeilingPoints = []; // for ceiling polygon drawing
+  let tempCeilingCircles = [];
+  let tempCeilingLines = [];
 
   // Selected objects
   let selectedSpaceId = null;
@@ -249,10 +269,13 @@
   // Vertex selection state
   let selectedVertexIndex = null; // currently selected vertex index within selected space
   let selectedVertexVisual = null; // highlight circle for selected vertex
+  let selectedCeilingVertexIndex = null; // currently selected ceiling vertex index
+  let selectedCeilingVertexVisual = null; // highlight circle for selected ceiling vertex
 
   // Mapping from polygon object to space id
   const polygonIdToSpaceId = new Map(); // fabric object id -> spaceId
   const spaceIdToPolygon = new Map();   // spaceId -> fabric.Polygon
+  const spaceIdToCeiling = new Map();   // spaceId -> fabric.Polygon (ceiling)
 
   // --------------------------
   // Persistence
@@ -532,12 +555,21 @@
     // Remove existing edge overlays
     const overlays = canvas.getObjects().filter(o => o.get && o.get("fpType") === "edgeOverlay");
     overlays.forEach(o => canvas.remove(o));
+    // Remove existing ceilings
+    const ceilings = canvas.getObjects().filter(o => o.get && o.get("fpType") === "ceiling");
+    ceilings.forEach(o => canvas.remove(o));
     polygonIdToSpaceId.clear();
     spaceIdToPolygon.clear();
+    spaceIdToCeiling.clear();
 
     floor.spaces.forEach(space => {
       addPolygonForSpace(space);
       updateEdgeOverlaysForSpace(space.id);
+      // Add ceiling if exists
+      if (space.ceilingVertices && space.ceilingVertices.length >= 3) {
+        addCeilingForSpace(space);
+        recalcCeilingArea(space);
+      }
     });
     // After polygons, draw scale line overlay
     drawScaleLineForFloor(floor);
@@ -612,7 +644,10 @@
     polygon.edit = true;
     polygon.objectCaching = false;
     polygon.hasBorders = false;
-    polygon.cornerColor = "#93c5fd"; // blue-300
+    // Only set corner color if not already set (allows ceiling to have purple, space to have blue)
+    if (!polygon.cornerColor) {
+      polygon.cornerColor = "#93c5fd"; // blue-300 (default for space polygons)
+    }
     polygon.cornerStyle = "circle";
     polygon.cornerSize = VERTEX_HANDLE_SIZE_PX;
     polygon.touchCornerSize = Math.max(VERTEX_HANDLE_SIZE_PX, 24);
@@ -683,12 +718,21 @@
     }
     polygon.dirty = true;
     polygon.setCoords();
-    // Keep vertex highlight synced if dragging the selected vertex
-    if (selectedSpaceId && selectedVertexIndex != null && currentControl && typeof currentControl.pointIndex === 'number') {
+    // Keep vertex highlight synced if dragging the selected vertex (space or ceiling)
+    if (selectedSpaceId && currentControl && typeof currentControl.pointIndex === 'number') {
       const spaceId = polygon.get("spaceId");
-      if (spaceId === selectedSpaceId && currentControl.pointIndex === selectedVertexIndex) {
+      const fpType = polygon.get("fpType");
+      
+      // Space vertex highlight
+      if (fpType === "space" && spaceId === selectedSpaceId && selectedVertexIndex != null && currentControl.pointIndex === selectedVertexIndex) {
         const absPts = getPolygonAbsolutePoints(polygon);
         if (absPts[selectedVertexIndex]) updateVertexHighlightPosition(absPts[selectedVertexIndex]);
+      }
+      
+      // Ceiling vertex highlight
+      if (fpType === "ceiling" && spaceId === selectedSpaceId && selectedCeilingVertexIndex != null && currentControl.pointIndex === selectedCeilingVertexIndex) {
+        const absPts = getPolygonAbsolutePoints(polygon);
+        if (absPts[selectedCeilingVertexIndex]) updateCeilingVertexHighlightPosition(absPts[selectedCeilingVertexIndex]);
       }
     }
     return true;
@@ -708,6 +752,12 @@
   // Interactions
   // --------------------------
   function enterDrawSpaceMode() {
+    // Toggle behavior: if already drawing space, cancel
+    if (isDrawingSpace) {
+      cancelDrawSpaceMode();
+      return;
+    }
+    
     cancelAllModes();
     isDrawingSpace = true;
     tempDrawPoints = [];
@@ -718,6 +768,10 @@
     setStatus("Drawing space: click to add vertices, click near first point to finish.");
     // Crosshair while drawing spaces
     canvas.defaultCursor = "crosshair";
+    // Highlight both draw space buttons
+    if (dom.btnDrawSpace) dom.btnDrawSpace.classList.add('active');
+    const btnDrawSpaceFromSpaces = document.getElementById("btnDrawSpaceFromSpaces");
+    if (btnDrawSpaceFromSpaces) btnDrawSpaceFromSpaces.classList.add('active');
     // Deselect any selected space when starting a new draw
     canvas.discardActiveObject();
     onCanvasSelectionCleared();
@@ -728,6 +782,22 @@
         o.set("stroke", COLOR_SPACE_STROKE);
       }
     });
+    canvas.requestRenderAll();
+  }
+  
+  function cancelDrawSpaceMode() {
+    isDrawingSpace = false;
+    tempDrawPoints = [];
+    tempDrawCircles.forEach(c => canvas.remove(c));
+    tempDrawLines.forEach(l => canvas.remove(l));
+    tempDrawCircles = [];
+    tempDrawLines = [];
+    canvas.defaultCursor = "default";
+    // Unhighlight both draw space buttons
+    if (dom.btnDrawSpace) dom.btnDrawSpace.classList.remove('active');
+    const btnDrawSpaceFromSpaces = document.getElementById("btnDrawSpaceFromSpaces");
+    if (btnDrawSpaceFromSpaces) btnDrawSpaceFromSpaces.classList.remove('active');
+    setStatus("Draw space cancelled.");
     canvas.requestRenderAll();
   }
 
@@ -769,11 +839,20 @@
     isDrawingSpace = false;
     isDrawingScale = false;
     isInsertingVertex = false;
+    isDrawingCeiling = false;
     // Reset cursor when leaving draw modes
     canvas.defaultCursor = "default";
+    // Unhighlight draw space buttons
+    if (dom.btnDrawSpace) dom.btnDrawSpace.classList.remove('active');
+    const btnDrawSpaceFromSpaces = document.getElementById("btnDrawSpaceFromSpaces");
+    if (btnDrawSpaceFromSpaces) btnDrawSpaceFromSpaces.classList.remove('active');
     // Unhighlight insert vertex button
     if (dom.btnInsertVertex) {
       dom.btnInsertVertex.classList.remove('active');
+    }
+    // Unhighlight draw ceiling button
+    if (dom.btnDrawCeiling) {
+      dom.btnDrawCeiling.classList.remove('active');
     }
     // Turn off scale line editing
     canvas.getObjects().forEach(o => {
@@ -804,6 +883,13 @@
       edges: [], // will be ensured
       area: 0,
       exteriorPerimeter: 0,
+      // Ceiling properties
+      ceilingSameAsFloor: true, // default checked
+      ceilingVertices: null, // array of {x,y} points or null
+      ceilingArea: 0, // computed from polygon
+      ceilingManualOverride: false,
+      ceilingManualArea: null,
+      ceilingVisible: true,
     };
     ensureEdgeArrayForSpace(space);
     floor.spaces.push(space);
@@ -826,12 +912,253 @@
     updateEdgeOverlaysForSpace(space.id);
     canvas.requestRenderAll();
     isDrawingSpace = false;
+    // Unhighlight both draw space buttons
+    if (dom.btnDrawSpace) dom.btnDrawSpace.classList.remove('active');
+    const btnDrawSpaceFromSpaces = document.getElementById("btnDrawSpaceFromSpaces");
+    if (btnDrawSpaceFromSpaces) btnDrawSpaceFromSpaces.classList.remove('active');
     renderSpacesList();
     setStatus("Space created. Select edges by clicking near them.");
     saveState();
   }
 
+  // --------------------------
+  // Ceiling drawing
+  // --------------------------
+  function enterDrawCeilingMode() {
+    if (!selectedSpaceId) {
+      alert("Select a space first.");
+      return;
+    }
+    const floor = activeFloor();
+    if (!floor) return;
+    const space = floor.spaces.find(s => s.id === selectedSpaceId);
+    if (!space) return;
+    
+    // If ceiling already exists, delete it first
+    if (space.ceilingVertices && Array.isArray(space.ceilingVertices) && space.ceilingVertices.length > 0) {
+      deleteCeilingForSpace(space.id);
+    }
+    
+    cancelAllModes();
+    isDrawingCeiling = true;
+    tempCeilingPoints = [];
+    tempCeilingCircles.forEach(c => canvas.remove(c));
+    tempCeilingLines.forEach(l => canvas.remove(l));
+    tempCeilingCircles = [];
+    tempCeilingLines = [];
+    setStatus("Drawing ceiling: click to add vertices, click near first point to finish.");
+    canvas.defaultCursor = "crosshair";
+    if (dom.btnDrawCeiling) dom.btnDrawCeiling.classList.add('active');
+  }
+  
+  function endDrawCeiling() {
+    if (!isDrawingCeiling) return;
+    if (tempCeilingPoints.length < 3) {
+      setStatus("Need at least 3 points for a ceiling polygon.");
+      return;
+    }
+    const floor = activeFloor();
+    if (!floor || !selectedSpaceId) return;
+    const space = floor.spaces.find(s => s.id === selectedSpaceId);
+    if (!space) return;
+    
+    // Store ceiling vertices
+    space.ceilingVertices = tempCeilingPoints.map(p => ({ x: p.x, y: p.y }));
+    space.ceilingVisible = true;
+    
+    // Cleanup temp visuals
+    tempCeilingCircles.forEach(c => canvas.remove(c));
+    tempCeilingLines.forEach(l => canvas.remove(l));
+    tempCeilingPoints = [];
+    tempCeilingCircles = [];
+    tempCeilingLines = [];
+    
+    // Add ceiling polygon
+    addCeilingForSpace(space);
+    recalcCeilingArea(space);
+    updateSpacePanel(space);
+    updateCeilingControls(space);
+    
+    canvas.requestRenderAll();
+    isDrawingCeiling = false;
+    if (dom.btnDrawCeiling) dom.btnDrawCeiling.classList.remove('active');
+    canvas.defaultCursor = "default";
+    setStatus("Ceiling created.");
+    saveState();
+  }
+  
+  function addCeilingForSpace(space) {
+    if (!space.ceilingVertices || space.ceilingVertices.length < 3) return;
+    
+    // Remove existing ceiling polygon if any
+    const oldCeiling = spaceIdToCeiling.get(space.id);
+    if (oldCeiling) {
+      canvas.remove(oldCeiling);
+      spaceIdToCeiling.delete(space.id);
+    }
+    
+    const pts = space.ceilingVertices.map(p => ({ x: p.x, y: p.y }));
+    const minX = Math.min(...pts.map(p => p.x));
+    const minY = Math.min(...pts.map(p => p.y));
+    const rel = pts.map(p => ({ x: p.x - minX, y: p.y - minY }));
+    
+    const isSelected = selectedSpaceId === space.id;
+    // Ceiling is only visible when: parent space is selected AND ceilingVisible flag is true AND "Same as Floor" is unchecked
+    const shouldBeVisible = isSelected && (space.ceilingVisible !== false) && !space.ceilingSameAsFloor;
+    const ceiling = new fabric.Polygon(rel, {
+      left: minX,
+      top: minY,
+      fill: isSelected ? COLOR_CEILING_SELECTED : COLOR_CEILING,
+      stroke: COLOR_CEILING_STROKE,
+      strokeWidth: 2,
+      objectCaching: false,
+      hasControls: shouldBeVisible,
+      hasBorders: false,
+      selectable: isSelected && shouldBeVisible,
+      evented: isSelected && shouldBeVisible,
+      perPixelTargetFind: true,
+      hoverCursor: "move",
+      visible: shouldBeVisible,
+      // Purple vertex controls to match ceiling color
+      cornerColor: COLOR_CEILING_STROKE,
+      cornerStyle: "circle",
+    });
+    ceiling.set("fpType", "ceiling");
+    ceiling.set("spaceId", space.id);
+    canvas.add(ceiling);
+    spaceIdToCeiling.set(space.id, ceiling);
+    
+    enablePolygonVertexEditing(ceiling);
+    // Note: enablePolygonVertexEditing already sets up the "modified" event which will call onPolygonModified
+    // onPolygonModified will detect fpType="ceiling" and delegate to onCeilingModified
+    
+    return ceiling;
+  }
+  
+  function onCeilingModified(ceiling) {
+    const spaceId = ceiling.get("spaceId");
+    const floor = activeFloor();
+    if (!floor || !spaceId) return;
+    const space = floor.spaces.find(s => s.id === spaceId);
+    if (!space) return;
+    
+    // Capture absolute positions before container update
+    const absPtsBefore = getPolygonAbsolutePoints(ceiling);
+    
+    // Recompute container dimensions
+    if (typeof ceiling._setPositionDimensions === 'function') {
+      ceiling._setPositionDimensions({});
+    }
+    
+    // Get absolute positions after container recalculation
+    const absPtsAfter = getPolygonAbsolutePoints(ceiling);
+    
+    // Compensate for shift
+    if (absPtsBefore.length > 0 && absPtsAfter.length > 0) {
+      const deltaX = absPtsBefore[0].x - absPtsAfter[0].x;
+      const deltaY = absPtsBefore[0].y - absPtsAfter[0].y;
+      ceiling.left += deltaX;
+      ceiling.top += deltaY;
+    }
+    
+    ceiling.setCoords();
+    
+    // Save corrected absolute positions
+    const absPts = getPolygonAbsolutePoints(ceiling);
+    space.ceilingVertices = absPts.map(p => ({ x: p.x, y: p.y }));
+    recalcCeilingArea(space);
+    updateSpacePanel(space);
+    saveState();
+  }
+  
+  function recalcCeilingArea(space) {
+    if (!space.ceilingVertices || space.ceilingVertices.length < 3) {
+      space.ceilingArea = 0;
+      return;
+    }
+    const floor = activeFloor();
+    if (!floor) return;
+    const scale = getScaleFactorForFloor(floor);
+    if (scale <= 0) {
+      space.ceilingArea = 0;
+      return;
+    }
+    const pxArea = polygonArea(space.ceilingVertices);
+    space.ceilingArea = pxArea * scale * scale;
+  }
+  
+  function deleteCeilingForSpace(spaceId) {
+    const floor = activeFloor();
+    if (!floor) return;
+    const space = floor.spaces.find(s => s.id === spaceId);
+    if (!space) return;
+    
+    // Remove ceiling polygon from canvas
+    const ceiling = spaceIdToCeiling.get(spaceId);
+    if (ceiling) {
+      canvas.remove(ceiling);
+      spaceIdToCeiling.delete(spaceId);
+    }
+    
+    // Clear ceiling data
+    space.ceilingVertices = null;
+    space.ceilingArea = 0;
+    space.ceilingManualOverride = false;
+    space.ceilingManualArea = null;
+    
+    updateSpacePanel(space);
+    updateCeilingControls(space);
+    canvas.renderAll();
+    saveState();
+    setStatus("Ceiling deleted.");
+  }
+  
+  function updateCeilingVisibility(space) {
+    if (!space) return;
+    const ceiling = spaceIdToCeiling.get(space.id);
+    if (ceiling) {
+      // Ceiling is only visible when: ceilingVisible flag is true AND "Same Ceiling and Floor Area" is unchecked
+      const shouldBeVisible = (space.ceilingVisible !== false) && !space.ceilingSameAsFloor;
+      const isParentSpaceSelected = (selectedSpaceId === space.id);
+      ceiling.set("visible", shouldBeVisible);
+      // Ceiling is only selectable/editable when its parent space is selected and it's visible
+      ceiling.set("hasControls", shouldBeVisible && isParentSpaceSelected);
+      ceiling.set("selectable", shouldBeVisible && isParentSpaceSelected);
+      ceiling.set("evented", shouldBeVisible && isParentSpaceSelected);
+      canvas.renderAll();
+    }
+    // Update button label
+    if (dom.btnToggleCeilingVisibility) {
+      const isVisible = space.ceilingVisible !== false;
+      dom.btnToggleCeilingVisibility.textContent = isVisible ? "Hide Ceiling" : "Show Ceiling";
+    }
+  }
+  
+  function updateCeilingControls(space) {
+    if (!space) {
+      if (dom.btnDeleteCeiling) dom.btnDeleteCeiling.style.display = 'none';
+      if (dom.btnToggleCeilingVisibility) dom.btnToggleCeilingVisibility.style.display = 'none';
+      return;
+    }
+    const hasCeiling = space.ceilingVertices && Array.isArray(space.ceilingVertices) && space.ceilingVertices.length > 0;
+    if (dom.btnDeleteCeiling) {
+      dom.btnDeleteCeiling.style.display = hasCeiling ? '' : 'none';
+    }
+    if (dom.btnToggleCeilingVisibility) {
+      dom.btnToggleCeilingVisibility.style.display = hasCeiling ? '' : 'none';
+      const isVisible = space.ceilingVisible !== false;
+      dom.btnToggleCeilingVisibility.textContent = isVisible ? "Hide Ceiling" : "Show Ceiling";
+    }
+  }
+
   function onPolygonModified(poly) {
+    // Check if this is a ceiling polygon - if so, use the ceiling-specific handler
+    const fpType = poly.get("fpType");
+    if (fpType === "ceiling") {
+      onCeilingModified(poly);
+      return;
+    }
+    
     // Update the space vertices based on polygon absolute points
     const spaceId = poly.get("spaceId");
     const floor = activeFloor();
@@ -884,8 +1211,65 @@
     lastPointerCanvas = { x: pointer.x, y: pointer.y };
     // Edge hover/selection gating: pointer cursor appears over edges only when a space is selected
     if (!selectedSpaceId) {
-      canvas.defaultCursor = (isDrawingSpace || isDrawingScale) ? "crosshair" : "default";
+      canvas.defaultCursor = (isDrawingSpace || isDrawingScale || isDrawingCeiling) ? "crosshair" : "default";
     }
+    
+    if (isDrawingCeiling) {
+      // Close ceiling polygon if clicking near the first vertex
+      if (tempCeilingPoints.length > 0) {
+        const first = tempCeilingPoints[0];
+        const dToFirst = distance(pointer, first);
+        if (dToFirst <= SPACE_CLOSE_THRESHOLD_PX) {
+          suppressDeselectUntilMouseUp = true;
+          if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
+          endDrawCeiling();
+          return;
+        }
+      }
+      // Add point + temp visuals (purple for ceiling)
+      const circ = new fabric.Circle({
+        radius: 3,
+        fill: COLOR_CEILING_STROKE,
+        left: pointer.x,
+        top: pointer.y,
+        originX: "center",
+        originY: "center",
+        selectable: false,
+        evented: false,
+      });
+      canvas.add(circ);
+      tempCeilingCircles.push(circ);
+      
+      if (tempCeilingPoints.length > 0) {
+        const prev = tempCeilingPoints[tempCeilingPoints.length - 1];
+        const dx = pointer.x - prev.x;
+        const dy = pointer.y - prev.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        const cx = (prev.x + pointer.x) / 2;
+        const cy = (prev.y + pointer.y) / 2;
+        const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+        const seg = new fabric.Rect({
+          left: cx,
+          top: cy,
+          originX: "center",
+          originY: "center",
+          width: len,
+          height: TEMP_EDGE_THICKNESS_PX,
+          angle: angleDeg,
+          fill: COLOR_CEILING_STROKE,
+          stroke: null,
+          selectable: false,
+          evented: false,
+          objectCaching: false,
+        });
+        canvas.add(seg);
+        tempCeilingLines.push(seg);
+      }
+      tempCeilingPoints.push({ x: pointer.x, y: pointer.y });
+      canvas.renderAll();
+      return;
+    }
+    
     if (isDrawingSpace) {
       // Close polygon if clicking near the first vertex (without adding a new vertex)
       if (tempDrawPoints.length > 0) {
@@ -963,17 +1347,18 @@
         const [p1, p2] = tempScalePoints;
         tempScalePoints = [];
         const pixelLen = distance(p1, p2);
-        floor.scale = floor.scale || { realLen: 0, pixelLen: 0, unit: dom.scaleUnit.value, line: null };
+        floor.scale = floor.scale || { realLenFeet: 0, pixelLen: 0, unit: dom.scaleUnit.value, line: null };
         floor.scale.pixelLen = pixelLen;
         floor.scale.unit = dom.scaleUnit.value;
         floor.scale.line = { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y };
         floor.scale.visible = true; // show new scale line
         // Ask user to enter realLen if blank
-        if (!floor.scale.realLen || floor.scale.realLen <= 0) {
+        if (!floor.scale.realLenFeet || floor.scale.realLenFeet <= 0) {
           const entered = window.prompt("Enter real-world length for the drawn scale (in selected unit):", "10");
           const num = parseFloat(entered);
           if (!isNaN(num) && num > 0) {
-            floor.scale.realLen = num;
+            const realLenFeet = displayLengthToFeet(num);
+            floor.scale.realLenFeet = realLenFeet;
             dom.scaleLength.value = num;
           }
         }
@@ -995,49 +1380,85 @@
       }
     }
 
-    // Insert vertex mode: only insert if crosshair cursor is visible (near an edge)
+    // Insert vertex mode: works for both space and ceiling polygons
     if (isInsertingVertex && selectedSpaceId) {
       const isCrosshairVisible = (canvas.defaultCursor === "crosshair") || (canvas.upperCanvasEl && canvas.upperCanvasEl.style && canvas.upperCanvasEl.style.cursor === "crosshair");
-      if (isCrosshairVisible && hoverEdgeIndex !== null) {
-        insertVertexAtEdge(selectedSpaceId, hoverEdgeIndex, pointer);
-        // Exit insert vertex mode and unhighlight button
-        isInsertingVertex = false;
-        if (dom.btnInsertVertex) {
-          dom.btnInsertVertex.classList.remove('active');
+      if (isCrosshairVisible) {
+        // Check if we're hovering over a ceiling edge first
+        const space = floor.spaces.find(s => s.id === selectedSpaceId);
+        const ceiling = spaceIdToCeiling.get(selectedSpaceId);
+        if (ceiling && ceiling.visible && space && !space.ceilingSameAsFloor) {
+          const ceilingPts = getPolygonAbsolutePoints(ceiling);
+          const ceilingIdx = findClosestEdgeIndex(ceilingPts, pointer, EDGE_HIT_BUFFER_PX);
+          if (ceilingIdx !== null) {
+            insertVertexAtCeilingEdge(selectedSpaceId, ceilingIdx, pointer);
+            isInsertingVertex = false;
+            if (dom.btnInsertVertex) dom.btnInsertVertex.classList.remove('active');
+            setStatus("Ceiling vertex inserted.");
+            canvas.defaultCursor = "default";
+            return;
+          }
         }
-        setStatus("Vertex inserted.");
-        canvas.defaultCursor = "default";
-        return;
-      } else if (!isCrosshairVisible) {
-        // Clicked outside edge buffer - don't insert vertex
-        return;
+        // Otherwise check for space polygon edges
+        if (hoverEdgeIndex !== null) {
+          insertVertexAtEdge(selectedSpaceId, hoverEdgeIndex, pointer);
+          isInsertingVertex = false;
+          if (dom.btnInsertVertex) dom.btnInsertVertex.classList.remove('active');
+          setStatus("Vertex inserted.");
+          canvas.defaultCursor = "default";
+          return;
+        }
       }
+      // Clicked outside edge buffer - don't insert
+      return;
     }
 
     // Selection & dragging: only allow dragging when move cursor is visible
     if (selectedSpaceId) {
       const poly = spaceIdToPolygon.get(selectedSpaceId);
+      const ceiling = spaceIdToCeiling.get(selectedSpaceId);
+      
+      // Check ceiling vertex selection first (if ceiling is visible)
+      if (ceiling && ceiling.visible) {
+        const ceilingPts = getPolygonAbsolutePoints(ceiling);
+        const pointerForVertex = canvas.getPointer(opt.e, false);
+        const ceilingVIdx = findClosestVertexIndex(ceilingPts, pointerForVertex, VERTEX_DRAG_RADIUS_PX);
+        if (ceilingVIdx != null) {
+          // Selecting a ceiling vertex clears edge selection and space vertex selection
+          selectedEdgeIndex = null;
+          clearEdgeHighlight();
+          clearSelectedVertex(); // Clear space vertex selection
+          updateEdgePanelFromSelection();
+          setSelectedCeilingVertex(ceilingVIdx);
+          setStatus(`Ceiling vertex ${ceilingVIdx + 1} selected.`);
+          return;
+        }
+      }
+      
       if (poly) {
-        // Vertex selection: click near a vertex toggles selected vertex
+        // Vertex selection: click near a space vertex toggles selected vertex
         const absPtsPre = getPolygonAbsolutePoints(poly);
         const pointerForVertex = canvas.getPointer(opt.e, false);
         const vIdx = findClosestVertexIndex(absPtsPre, pointerForVertex, VERTEX_DRAG_RADIUS_PX);
         if (vIdx != null) {
-          // Selecting a vertex clears edge selection
+          // Selecting a vertex clears edge selection and ceiling vertex selection
           selectedEdgeIndex = null;
           clearEdgeHighlight();
+          clearSelectedCeilingVertex(); // Clear ceiling vertex selection
           updateEdgePanelFromSelection();
           setSelectedVertex(vIdx);
           setStatus(`Vertex ${vIdx + 1} selected.`);
         } else {
           // Clicking outside vertices clears vertex selection
           clearSelectedVertex();
+          clearSelectedCeilingVertex();
         }
       // If the pointer cursor is visible and we already have a hover edge, select it immediately
       const pointerVisibleEarly = (canvas.defaultCursor === "pointer") || (canvas.upperCanvasEl && canvas.upperCanvasEl.style && canvas.upperCanvasEl.style.cursor === "pointer");
       if (pointerVisibleEarly && hoverEdgeIndex != null) {
         const absPtsHover = getPolygonAbsolutePoints(poly);
         clearSelectedVertex();
+        clearSelectedCeilingVertex();
         selectedEdgeIndex = hoverEdgeIndex;
         highlightSelectedEdge(absPtsHover, selectedEdgeIndex);
         canvas.setActiveObject(poly);
@@ -1067,6 +1488,7 @@
             return; // require visible pointer prior to selection
           }
           clearSelectedVertex();
+          clearSelectedCeilingVertex();
           selectedEdgeIndex = idx;
           highlightSelectedEdge(absPts, idx);
           // Keep the polygon as the active object so Fabric doesn't fire selection:cleared
@@ -1136,6 +1558,15 @@
         const show = canvas.getActiveObjects().length === 1;
         dom.btnDeleteSpace.style.display = show ? '' : 'none';
       }
+    } else if (target.get("fpType") === "ceiling") {
+      // Ceiling selected - only allow if its parent space is already selected
+      const ceilingSpaceId = target.get("spaceId");
+      if (ceilingSpaceId !== selectedSpaceId) {
+        // Parent space not selected - reject ceiling selection
+        canvas.discardActiveObject();
+        canvas.renderAll();
+      }
+      // If parent space is selected, allow ceiling to be the active object for editing
     }
   }
 
@@ -1159,8 +1590,18 @@
     selectedSpaceId = null;
     selectedEdgeIndex = null;
     clearSelectedVertex();
+    clearSelectedCeilingVertex();
     hoverEdgeIndex = null;
     clearEdgeHighlight();
+    // Hide all ceilings when no space is selected and disable their controls
+    canvas.getObjects().forEach(o => {
+      if (o.get("fpType") === "ceiling") {
+        o.set("visible", false);
+        o.set("hasControls", false);
+        o.set("selectable", false);
+        o.set("evented", false);
+      }
+    });
     // Keep edge overlays visible; refresh to base color when nothing is selected
     const floor = activeFloor();
     if (floor && Array.isArray(floor.spaces)) {
@@ -1316,6 +1757,61 @@
     clearVertexHighlight();
     if (dom.btnDeleteVertex) dom.btnDeleteVertex.style.display = 'none';
   }
+  
+  function setSelectedCeilingVertex(index) {
+    // Clear space vertex selection
+    clearSelectedVertex();
+    selectedCeilingVertexIndex = index;
+    if (dom.btnDeleteVertex) dom.btnDeleteVertex.style.display = '';
+    const ceiling = selectedSpaceId ? spaceIdToCeiling.get(selectedSpaceId) : null;
+    if (ceiling) {
+      const pts = getPolygonAbsolutePoints(ceiling);
+      const p = pts[selectedCeilingVertexIndex];
+      if (p) drawCeilingVertexHighlightAt(p);
+    }
+  }
+  
+  function clearSelectedCeilingVertex() {
+    selectedCeilingVertexIndex = null;
+    clearCeilingVertexHighlight();
+    if (dom.btnDeleteVertex) dom.btnDeleteVertex.style.display = 'none';
+  }
+  
+  function drawCeilingVertexHighlightAt(point) {
+    clearCeilingVertexHighlight();
+    selectedCeilingVertexVisual = new fabric.Circle({
+      radius: Math.max(6, VERTEX_HANDLE_SIZE_PX * 0.6),
+      fill: COLOR_VERTEX_SELECTED_FILL,
+      stroke: COLOR_VERTEX_SELECTED_STROKE,
+      strokeWidth: 2,
+      left: point.x,
+      top: point.y,
+      originX: "center",
+      originY: "center",
+      selectable: false,
+      evented: false,
+    });
+    selectedCeilingVertexVisual.set("fpType", "ceilingVertexHighlight");
+    canvas.add(selectedCeilingVertexVisual);
+    selectedCeilingVertexVisual.bringToFront();
+    canvas.renderAll();
+  }
+  
+  function clearCeilingVertexHighlight() {
+    if (selectedCeilingVertexVisual) {
+      canvas.remove(selectedCeilingVertexVisual);
+      selectedCeilingVertexVisual = null;
+      canvas.renderAll();
+    }
+  }
+  
+  function updateCeilingVertexHighlightPosition(point) {
+    if (!selectedCeilingVertexVisual) return;
+    selectedCeilingVertexVisual.set({ left: point.x, top: point.y });
+    selectedCeilingVertexVisual.setCoords();
+    selectedCeilingVertexVisual.bringToFront();
+    canvas.renderAll();
+  }
 
   function setSpaceInputsEnabled(enabled) {
     dom.spaceName.disabled = !enabled;
@@ -1323,6 +1819,7 @@
     if (dom.skylightCheckbox) dom.skylightCheckbox.disabled = !enabled;
     if (dom.skylightArea) dom.skylightArea.disabled = !enabled;
     if (dom.skylightTypeSelect) dom.skylightTypeSelect.disabled = !enabled;
+    if (dom.ceilingSameAsFloor) dom.ceilingSameAsFloor.disabled = !enabled;
   }
 
   function setEdgeInputsEnabled(enabled) {
@@ -1352,14 +1849,34 @@
       clearEdgeHighlight();
       hoverEdgeIndex = null;
       clearSelectedVertex();
+      clearSelectedCeilingVertex();
     }
-    // Update fills
+    // Update fills and ceiling visibility
     canvas.getObjects().forEach(o => {
       if (o.get("fpType") === "space") {
         if (o.get("spaceId") === spaceId) {
           o.set("fill", COLOR_SPACE_SELECTED);
         } else {
           o.set("fill", COLOR_SPACE);
+        }
+      }
+      // Show/hide ceilings: only visible when their parent space is selected AND "Same Ceiling and Floor Area" is unchecked
+      if (o.get("fpType") === "ceiling") {
+        const ceilingSpaceId = o.get("spaceId");
+        const floor = activeFloor();
+        const space = floor?.spaces.find(s => s.id === ceilingSpaceId);
+        const isParentSpaceSelected = (ceilingSpaceId === spaceId);
+        const shouldBeVisible = isParentSpaceSelected && space && (space.ceilingVisible !== false) && !space.ceilingSameAsFloor;
+        o.set("visible", shouldBeVisible);
+        // Ceiling is only selectable/editable when its parent space is selected
+        o.set("hasControls", shouldBeVisible);
+        o.set("selectable", isParentSpaceSelected && shouldBeVisible);
+        o.set("evented", isParentSpaceSelected && shouldBeVisible);
+        // Update ceiling fill based on selection
+        if (isParentSpaceSelected) {
+          o.set("fill", COLOR_CEILING_SELECTED);
+        } else {
+          o.set("fill", COLOR_CEILING);
         }
       }
     });
@@ -1388,7 +1905,7 @@
       dom.btnInsertVertex.style.display = show ? '' : 'none';
     }
     if (dom.btnDeleteVertex) {
-      const showDel = !!space && selectedVertexIndex != null;
+      const showDel = !!space && (selectedVertexIndex != null || selectedCeilingVertexIndex != null);
       dom.btnDeleteVertex.style.display = showDel ? '' : 'none';
     }
     // Toggle panel visibility
@@ -1426,14 +1943,60 @@
       dom.spaceCeiling.value = "";
       dom.spaceArea.textContent = "-";
       dom.spaceExteriorPerim.textContent = "-";
+      dom.spaceCeilingArea.textContent = "-";
       if (dom.spaceCeiling) dom.spaceCeiling.classList.remove('input-error');
+      if (dom.ceilingSameAsFloor) dom.ceilingSameAsFloor.checked = false;
+      if (dom.ceilingControlsRow) dom.ceilingControlsRow.style.display = 'none';
+      if (dom.ceilingManualEntry) dom.ceilingManualEntry.checked = false;
+      if (dom.ceilingManualInputRow) dom.ceilingManualInputRow.style.display = 'none';
+      if (dom.ceilingManualArea) dom.ceilingManualArea.classList.remove('input-error');
       return;
     }
     dom.spaceName.value = space.name || "";
     dom.spaceCeiling.value = space.ceilingHeight ?? "";
     dom.spaceArea.textContent = formatWithUnit(space.area, true);
     dom.spaceExteriorPerim.textContent = formatWithUnit(space.exteriorPerimeter, false);
-    // Mark ceiling input error if selected space and empty
+    
+    // Ceiling area display logic:
+    // 1. If "Same Ceiling and Floor Area" is checked: display = floor area
+    // 2. Else if "Enter Manually" is checked: display = manual value (or error if empty)
+    // 3. Else: display = computed polygon area
+    let displayCeilingArea;
+    if (space.ceilingSameAsFloor) {
+      displayCeilingArea = space.area; // Use floor area
+    } else if (space.ceilingManualOverride) {
+      displayCeilingArea = space.ceilingManualArea ?? 0;
+    } else {
+      displayCeilingArea = space.ceilingArea;
+    }
+    dom.spaceCeilingArea.textContent = formatWithUnit(displayCeilingArea, true);
+    
+    // Update ceiling controls
+    if (dom.ceilingSameAsFloor) {
+      dom.ceilingSameAsFloor.checked = !!space.ceilingSameAsFloor;
+    }
+    // Show/hide ceiling controls: hidden when "Same as Floor" is checked
+    if (dom.ceilingControlsRow) {
+      dom.ceilingControlsRow.style.display = space.ceilingSameAsFloor ? 'none' : '';
+    }
+    if (dom.ceilingManualEntry) {
+      dom.ceilingManualEntry.checked = !!space.ceilingManualOverride;
+    }
+    if (dom.ceilingManualInputRow) {
+      dom.ceilingManualInputRow.style.display = space.ceilingManualOverride ? '' : 'none';
+    }
+    if (dom.ceilingManualArea) {
+      dom.ceilingManualArea.value = space.ceilingManualArea ?? "";
+      // Mark error if manual entry is checked but value is empty
+      if (space.ceilingManualOverride && !space.ceilingManualArea && space.ceilingManualArea !== 0) {
+        dom.ceilingManualArea.classList.add('input-error');
+      } else {
+        dom.ceilingManualArea.classList.remove('input-error');
+      }
+    }
+    updateCeilingControls(space);
+    
+    // Mark ceiling height input error if selected space and empty
     if (selectedSpaceId && space.id === selectedSpaceId) {
       const empty = !(space.ceilingHeight || space.ceilingHeight === 0) ? true : (dom.spaceCeiling.value === "");
       if (empty) dom.spaceCeiling.classList.add('input-error'); else dom.spaceCeiling.classList.remove('input-error');
@@ -1544,6 +2107,7 @@
     if (dom.edgeHeightUnit) dom.edgeHeightUnit.textContent = unit;
     if (dom.edgeWinWidthUnit) dom.edgeWinWidthUnit.textContent = unit;
     if (dom.edgeWinHeightUnit) dom.edgeWinHeightUnit.textContent = unit;
+    if (dom.ceilingManualAreaUnit) dom.ceilingManualAreaUnit.textContent = unit + "²";
   }
 
   // --------------------------
@@ -1591,7 +2155,10 @@
   }
 
   function recalcAllSpacesForFloor(floor) {
-    floor.spaces.forEach(s => recalcSpaceDerived(s));
+    floor.spaces.forEach(s => {
+      recalcSpaceDerived(s);
+      recalcCeilingArea(s);
+    });
     updatePanelsIfSelectionActive();
     saveState();
   }
@@ -1614,7 +2181,7 @@
       name,
       imageSrc,
       backgroundFit: null,
-      scale: { realLen: 0, pixelLen: 0, unit: dom.scaleUnit.value, line: null, visible: true },
+      scale: { realLenFeet: 0, pixelLen: 0, unit: dom.scaleUnit.value, line: null, visible: true },
       spaces: [],
     };
     AppState.floors.push(floor);
@@ -1663,6 +2230,91 @@
   // --------------------------
   // Space operations
   // --------------------------
+  function insertVertexAtCeilingEdge(spaceId, edgeIdx, clickPoint) {
+    const floor = activeFloor();
+    if (!floor) return;
+    const space = floor.spaces.find(s => s.id === spaceId);
+    if (!space) return;
+    
+    const ceiling = spaceIdToCeiling.get(spaceId);
+    if (!ceiling) return;
+    
+    // Get the two vertices of the edge
+    const v1 = space.ceilingVertices[edgeIdx];
+    const v2 = space.ceilingVertices[(edgeIdx + 1) % space.ceilingVertices.length];
+    
+    // Find the closest point on the edge to the click point
+    const A = { x: v1.x, y: v1.y };
+    const B = { x: v2.x, y: v2.y };
+    const P = { x: clickPoint.x, y: clickPoint.y };
+    const ABx = B.x - A.x, ABy = B.y - A.y;
+    const APx = P.x - A.x, APy = P.y - A.y;
+    const ab2 = ABx * ABx + ABy * ABy;
+    let t = 0.5;
+    if (ab2 > 0) {
+      t = (APx * ABx + APy * ABy) / ab2;
+      t = Math.max(0, Math.min(1, t));
+    }
+    const newVertex = {
+      x: A.x + ABx * t,
+      y: A.y + ABy * t
+    };
+    
+    // Insert the new vertex after edgeIdx
+    space.ceilingVertices.splice(edgeIdx + 1, 0, newVertex);
+    
+    // Update ceiling polygon points without changing left/top
+    const invMat = fabric.util.invertTransform(ceiling.calcTransformMatrix());
+    const newPoints = space.ceilingVertices.map(v => {
+      const local = fabric.util.transformPoint(new fabric.Point(v.x, v.y), invMat);
+      return { x: local.x + ceiling.pathOffset.x, y: local.y + ceiling.pathOffset.y };
+    });
+    ceiling.set({ points: newPoints });
+    
+    // Rebuild the vertex controls
+    ceiling.controls = ceiling.points.reduce(function (acc, point, index) {
+      acc["p" + index] = new fabric.Control({
+        positionHandler: polygonPositionHandler(index),
+        actionHandler: anchorWrapper(index, actionHandler),
+        actionName: "modifyPolygon",
+        pointIndex: index
+      });
+      return acc;
+    }, {});
+    
+    // Capture absolute positions before dimension update
+    const absPtsBefore = getPolygonAbsolutePoints(ceiling);
+    
+    // Update polygon dimensions and compensate for any shift
+    if (typeof ceiling._setPositionDimensions === 'function') {
+      ceiling._setPositionDimensions({});
+    }
+    const absPtsAfter = getPolygonAbsolutePoints(ceiling);
+    if (absPtsBefore.length > 0 && absPtsAfter.length > 0) {
+      const deltaX = absPtsBefore[0].x - absPtsAfter[0].x;
+      const deltaY = absPtsBefore[0].y - absPtsAfter[0].y;
+      ceiling.left += deltaX;
+      ceiling.top += deltaY;
+    }
+    
+    ceiling.setCoords();
+    ceiling.dirty = true;
+    
+    // Update space vertices with corrected absolute positions
+    const finalAbsPts = getPolygonAbsolutePoints(ceiling);
+    space.ceilingVertices = finalAbsPts.map(p => ({ x: p.x, y: p.y }));
+    
+    // Recalculate ceiling area
+    recalcCeilingArea(space);
+    updateSpacePanel(space);
+    
+    // Ensure the ceiling is still selected and active
+    canvas.setActiveObject(ceiling);
+    canvas.renderAll();
+    
+    saveState();
+  }
+
   function insertVertexAtEdge(spaceId, edgeIdx, clickPoint) {
     const floor = activeFloor();
     if (!floor) return;
@@ -1787,6 +2439,12 @@
       polygonIdToSpaceId.delete(poly.__uid || poly.owningCursor || poly.id);
       spaceIdToPolygon.delete(space.id);
     }
+    // Remove ceiling from canvas
+    const ceiling = spaceIdToCeiling.get(space.id);
+    if (ceiling) {
+      canvas.remove(ceiling);
+      spaceIdToCeiling.delete(space.id);
+    }
     floor.spaces = floor.spaces.filter(s => s.id !== space.id);
     // Remove overlays for this space
     removeEdgeOverlaysForSpace(space.id);
@@ -1906,6 +2564,7 @@
     const space = floor?.spaces.find(s => s.id === selectedSpaceId);
     if (!space) return;
     space.name = dom.spaceName.value.trim();
+    renderSpacesList(); // Update space list buttons immediately
     saveState();
   });
 
@@ -2119,6 +2778,90 @@
       saveState();
     });
   }
+  
+  // Ceiling controls
+  if (dom.ceilingSameAsFloor) {
+    dom.ceilingSameAsFloor.addEventListener('change', () => {
+      const floor = activeFloor();
+      if (!floor || !selectedSpaceId) return;
+      const space = floor.spaces.find(s => s.id === selectedSpaceId);
+      if (!space) return;
+      space.ceilingSameAsFloor = !!dom.ceilingSameAsFloor.checked;
+      // When checked: hide all ceiling controls, override area with floor area, and hide ceiling polygon
+      // When unchecked: show ceiling controls and ceiling polygon
+      updateCeilingVisibility(space);
+      updateSpacePanel(space);
+      saveState();
+    });
+  }
+  
+  if (dom.btnDrawCeiling) {
+    dom.btnDrawCeiling.addEventListener('click', () => {
+      enterDrawCeilingMode();
+    });
+  }
+  
+  if (dom.btnToggleCeilingVisibility) {
+    dom.btnToggleCeilingVisibility.addEventListener('click', () => {
+      const floor = activeFloor();
+      if (!floor || !selectedSpaceId) return;
+      const space = floor.spaces.find(s => s.id === selectedSpaceId);
+      if (!space) return;
+      space.ceilingVisible = !(space.ceilingVisible !== false);
+      updateCeilingVisibility(space);
+      saveState();
+    });
+  }
+  
+  if (dom.btnDeleteCeiling) {
+    dom.btnDeleteCeiling.addEventListener('click', () => {
+      if (!selectedSpaceId) return;
+      if (confirmAction("Delete ceiling?")) {
+        deleteCeilingForSpace(selectedSpaceId);
+      }
+    });
+  }
+  
+  if (dom.ceilingManualEntry) {
+    dom.ceilingManualEntry.addEventListener('change', () => {
+      const floor = activeFloor();
+      if (!floor || !selectedSpaceId) return;
+      const space = floor.spaces.find(s => s.id === selectedSpaceId);
+      if (!space) return;
+      space.ceilingManualOverride = !!dom.ceilingManualEntry.checked;
+      if (dom.ceilingManualInputRow) {
+        dom.ceilingManualInputRow.style.display = space.ceilingManualOverride ? '' : 'none';
+      }
+      // If unchecking, revert to computed area
+      if (!space.ceilingManualOverride) {
+        space.ceilingManualArea = null;
+      }
+      updateSpacePanel(space);
+      saveState();
+    });
+  }
+  
+  if (dom.ceilingManualArea) {
+    dom.ceilingManualArea.addEventListener('input', () => {
+      const floor = activeFloor();
+      if (!floor || !selectedSpaceId) return;
+      const space = floor.spaces.find(s => s.id === selectedSpaceId);
+      if (!space) return;
+      const rawValue = dom.ceilingManualArea.value;
+      const v = parseFloat(rawValue);
+      space.ceilingManualArea = isFinite(v) && v >= 0 ? v : null;
+      
+      // Update error state immediately
+      if (space.ceilingManualOverride && (rawValue === "" || !isFinite(v) || v < 0)) {
+        dom.ceilingManualArea.classList.add('input-error');
+      } else {
+        dom.ceilingManualArea.classList.remove('input-error');
+      }
+      
+      updateSpacePanel(space);
+      saveState();
+    });
+  }
 
   function getSelectedEdge() {
     const floor = activeFloor();
@@ -2152,6 +2895,19 @@
     enterDrawSpaceMode();
   });
 
+  // Draw New Space button from Spaces panel
+  const btnDrawSpaceFromSpaces = document.getElementById("btnDrawSpaceFromSpaces");
+  if (btnDrawSpaceFromSpaces) {
+    btnDrawSpaceFromSpaces.addEventListener("click", () => {
+      const floor = activeFloor();
+      if (!floor) {
+        alert("Add a floor first.");
+        return;
+      }
+      enterDrawSpaceMode();
+    });
+  }
+
   if (dom.btnInsertVertex) {
     dom.btnInsertVertex.addEventListener("click", () => {
       if (!selectedSpaceId) {
@@ -2177,6 +2933,7 @@
         hoverEdgeIndex = null;
         clearEdgeHighlight();
         clearSelectedVertex();
+        clearSelectedCeilingVertex();
         updateEdgePanelFromSelection();
         setStatus("Hover near an edge to insert a vertex.");
       }
@@ -2596,7 +3353,7 @@
   canvas.on("mouse:up", function(){ suppressDeselectUntilMouseUp = false; });
   // Update cursor on hover to show pointer only when a space is selected and near an edge
   canvas.on("mouse:move", function(opt) {
-    if (isDrawingSpace || isDrawingScale) {
+    if (isDrawingSpace || isDrawingScale || isDrawingCeiling) {
       canvas.defaultCursor = "crosshair";
       return;
     }
@@ -2620,20 +3377,51 @@
     if (!poly) { canvas.defaultCursor = "default"; return; }
     const pointer = canvas.getPointer(opt.e, false); // canvas-space coords
     const absPts = getPolygonAbsolutePoints(poly);
+    
+    // Check ceiling polygon vertices and edges too
+    const floor = activeFloor();
+    const space = floor?.spaces.find(s => s.id === selectedSpaceId);
+    const ceiling = spaceIdToCeiling.get(selectedSpaceId);
+    let ceilingAbsPts = null;
+    let nearCeilingVertex = false;
+    let ceilingEdgeIdx = null;
+    
+    if (ceiling && ceiling.visible && space && !space.ceilingSameAsFloor) {
+      ceilingAbsPts = getPolygonAbsolutePoints(ceiling);
+      nearCeilingVertex = ceilingAbsPts.some(p => distance(pointer, p) <= VERTEX_DRAG_RADIUS_PX);
+      ceilingEdgeIdx = findClosestEdgeIndex(ceilingAbsPts, pointer, EDGE_HIT_BUFFER_PX);
+    }
+    
     const nearVertex = absPts.some(p => distance(pointer, p) <= VERTEX_DRAG_RADIUS_PX);
     // Keep edge overlays perfectly aligned during hover/move
     updateEdgeOverlaysForSpace(selectedSpaceId);
+    
+    // Show crosshair when near ceiling vertices (consistent with space vertices for dragging)
+    if (nearCeilingVertex && !isInsertingVertex) {
+      canvas.defaultCursor = "crosshair";
+      if (canvas.upperCanvasEl && canvas.upperCanvasEl.style) {
+        canvas.upperCanvasEl.style.cursor = "crosshair";
+      }
+      return;
+    }
+    
     if (nearVertex && !isInsertingVertex) { hoverEdgeIndex = null; canDragSelectedSpace = false; canvas.defaultCursor = "default"; return; }
     const idx = findClosestEdgeIndex(absPts, pointer, EDGE_HIT_BUFFER_PX);
     hoverEdgeIndex = (idx !== null) ? idx : null;
-    // Keep selected vertex highlight in sync
+    // Keep selected vertex highlight in sync (space and ceiling)
     if (selectedVertexIndex != null && Array.isArray(absPts) && absPts[selectedVertexIndex]) {
       updateVertexHighlightPosition(absPts[selectedVertexIndex]);
     }
+    if (selectedCeilingVertexIndex != null && ceiling && ceiling.visible) {
+      const ceilingAbsPts = getPolygonAbsolutePoints(ceiling);
+      if (Array.isArray(ceilingAbsPts) && ceilingAbsPts[selectedCeilingVertexIndex]) {
+        updateCeilingVertexHighlightPosition(ceilingAbsPts[selectedCeilingVertexIndex]);
+      }
+    }
     
-    // Insert vertex mode: show crosshair when near edge, default otherwise
+    // Insert vertex mode: show crosshair when near space edge or ceiling edge
     if (isInsertingVertex) {
-      if (hoverEdgeIndex !== null) {
+      if (hoverEdgeIndex !== null || ceilingEdgeIdx !== null) {
         canvas.defaultCursor = "crosshair";
       } else {
         canvas.defaultCursor = "default";
@@ -2697,13 +3485,28 @@
   // Keep vertex highlight synced after polygon/object modifications
   canvas.on("object:modified", function(opt){
     const t = opt && opt.target;
-    if (!t || (t.get && t.get("fpType") !== "space")) return;
-    if (!selectedSpaceId || selectedVertexIndex == null) return;
-    const poly = spaceIdToPolygon.get(selectedSpaceId);
-    if (!poly) return;
-    const pts = getPolygonAbsolutePoints(poly);
-    if (Array.isArray(pts) && pts[selectedVertexIndex]) {
-      updateVertexHighlightPosition(pts[selectedVertexIndex]);
+    if (!t || !selectedSpaceId) return;
+    
+    const fpType = t.get && t.get("fpType");
+    
+    // Space vertex highlight
+    if (fpType === "space" && selectedVertexIndex != null) {
+      const poly = spaceIdToPolygon.get(selectedSpaceId);
+      if (!poly) return;
+      const pts = getPolygonAbsolutePoints(poly);
+      if (Array.isArray(pts) && pts[selectedVertexIndex]) {
+        updateVertexHighlightPosition(pts[selectedVertexIndex]);
+      }
+    }
+    
+    // Ceiling vertex highlight
+    if (fpType === "ceiling" && selectedCeilingVertexIndex != null) {
+      const ceiling = spaceIdToCeiling.get(selectedSpaceId);
+      if (!ceiling) return;
+      const pts = getPolygonAbsolutePoints(ceiling);
+      if (Array.isArray(pts) && pts[selectedCeilingVertexIndex]) {
+        updateCeilingVertexHighlightPosition(pts[selectedCeilingVertexIndex]);
+      }
     }
   });
 
@@ -2711,6 +3514,12 @@
   // Delete selected vertex
   // --------------------------
   function deleteSelectedVertex() {
+    // Check if we're deleting a ceiling vertex or space vertex
+    if (selectedCeilingVertexIndex != null) {
+      deleteSelectedCeilingVertex();
+      return;
+    }
+    
     if (!selectedSpaceId || selectedVertexIndex == null) return;
     const floor = activeFloor();
     if (!floor) return;
@@ -2800,6 +3609,77 @@
     canvas.renderAll();
     saveState();
     setStatus("Vertex deleted.");
+  }
+  
+  function deleteSelectedCeilingVertex() {
+    if (!selectedSpaceId || selectedCeilingVertexIndex == null) return;
+    const floor = activeFloor();
+    if (!floor) return;
+    const space = floor.spaces.find(s => s.id === selectedSpaceId);
+    if (!space) return;
+    if (!Array.isArray(space.ceilingVertices) || space.ceilingVertices.length <= 3) {
+      alert("A ceiling must have at least 3 vertices.");
+      return;
+    }
+    const ceiling = spaceIdToCeiling.get(selectedSpaceId);
+    if (!ceiling) return;
+
+    // Remove the vertex
+    space.ceilingVertices.splice(selectedCeilingVertexIndex, 1);
+
+    // Rebuild polygon geometry from updated vertices without changing left/top
+    const invMat = fabric.util.invertTransform(ceiling.calcTransformMatrix());
+    const newPoints = space.ceilingVertices.map(v => {
+      const local = fabric.util.transformPoint(new fabric.Point(v.x, v.y), invMat);
+      return {
+        x: local.x + ceiling.pathOffset.x,
+        y: local.y + ceiling.pathOffset.y,
+      };
+    });
+    ceiling.set({ points: newPoints });
+
+    // Rebuild controls
+    ceiling.controls = ceiling.points.reduce(function (acc, point, index) {
+      acc["p" + index] = new fabric.Control({
+        positionHandler: polygonPositionHandler(index),
+        actionHandler: anchorWrapper(index, actionHandler),
+        actionName: "modifyPolygon",
+        pointIndex: index
+      });
+      return acc;
+    }, {});
+
+    // Compensate for container resize
+    const absPtsBefore = getPolygonAbsolutePoints(ceiling);
+    if (typeof ceiling._setPositionDimensions === 'function') {
+      ceiling._setPositionDimensions({});
+    }
+    const absPtsAfter = getPolygonAbsolutePoints(ceiling);
+    if (absPtsBefore.length > 0 && absPtsAfter.length > 0) {
+      const deltaX = absPtsBefore[0].x - absPtsAfter[0].x;
+      const deltaY = absPtsBefore[0].y - absPtsAfter[0].y;
+      ceiling.left += deltaX;
+      ceiling.top += deltaY;
+    }
+    ceiling.setCoords();
+    ceiling.dirty = true;
+
+    // Persist corrected absolute positions back to space
+    const finalAbsPts = getPolygonAbsolutePoints(ceiling);
+    space.ceilingVertices = finalAbsPts.map(p => ({ x: p.x, y: p.y }));
+
+    // Recalculate ceiling area
+    recalcCeilingArea(space);
+    updateSpacePanel(space);
+
+    // Clear selected ceiling vertex state after deletion
+    clearSelectedCeilingVertex();
+
+    // Keep ceiling active
+    canvas.setActiveObject(ceiling);
+    canvas.renderAll();
+    saveState();
+    setStatus("Ceiling vertex deleted.");
   }
 
   // --------------------------
