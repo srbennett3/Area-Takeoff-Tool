@@ -978,6 +978,7 @@
     recalcCeilingArea(space);
     updateSpacePanel(space);
     updateCeilingControls(space);
+    renderSpacesList(); // Update validation display
     
     canvas.requestRenderAll();
     isDrawingCeiling = false;
@@ -1108,6 +1109,7 @@
     
     updateSpacePanel(space);
     updateCeilingControls(space);
+    renderSpacesList(); // Update validation display
     canvas.renderAll();
     saveState();
     setStatus("Ceiling deleted.");
@@ -1138,9 +1140,20 @@
     if (!space) {
       if (dom.btnDeleteCeiling) dom.btnDeleteCeiling.style.display = 'none';
       if (dom.btnToggleCeilingVisibility) dom.btnToggleCeilingVisibility.style.display = 'none';
+      if (dom.btnDrawCeiling) dom.btnDrawCeiling.classList.remove('danger');
       return;
     }
     const hasCeiling = space.ceilingVertices && Array.isArray(space.ceilingVertices) && space.ceilingVertices.length > 0;
+    
+    // Make Draw Ceiling button red if no ceiling exists (and manual entry is not checked)
+    if (dom.btnDrawCeiling) {
+      if (!hasCeiling && !space.ceilingManualOverride) {
+        dom.btnDrawCeiling.classList.add('danger');
+      } else {
+        dom.btnDrawCeiling.classList.remove('danger');
+      }
+    }
+    
     if (dom.btnDeleteCeiling) {
       dom.btnDeleteCeiling.style.display = hasCeiling ? '' : 'none';
     }
@@ -2003,6 +2016,22 @@
     } else {
       dom.spaceCeiling.classList.remove('input-error');
     }
+    
+    // Mark skylight area error if skylight is checked but area is empty
+    if (dom.skylightCheckbox) {
+      dom.skylightCheckbox.checked = !!space.hasSkylight;
+    }
+    if (dom.skylightArea) {
+      dom.skylightArea.value = space.skylightArea ?? "";
+      if (space.hasSkylight && (space.skylightArea === null || space.skylightArea === undefined || space.skylightArea === '')) {
+        dom.skylightArea.classList.add('input-error');
+      } else {
+        dom.skylightArea.classList.remove('input-error');
+      }
+    }
+    if (dom.skylightAreaRow) {
+      dom.skylightAreaRow.style.display = space.hasSkylight ? '' : 'none';
+    }
   }
 
   function updateEdgePanelFromSelection() {
@@ -2083,7 +2112,18 @@
     // Doors checkbox toggle only visible when exterior is enabled
     if (dom.edgeDoorToggleRow) dom.edgeDoorToggleRow.style.display = rowDisplay;
     // Doors row follows the door checkbox when exterior is enabled
-    if (dom.edgeDoorRow) dom.edgeDoorRow.style.display = (enableFields && dom.doorCheckbox && dom.doorCheckbox.checked) ? '' : 'none';
+    const doorsEnabled = enableFields && dom.doorCheckbox && dom.doorCheckbox.checked;
+    if (dom.edgeDoorRow) dom.edgeDoorRow.style.display = doorsEnabled ? '' : 'none';
+    // Error highlight for door quantity when doors are enabled
+    if (dom.doorQty) {
+      if (doorsEnabled && (dom.doorQty.value === "" || dom.doorQty.value == null)) {
+        dom.doorQty.classList.add('input-error');
+      } else {
+        dom.doorQty.classList.remove('input-error');
+      }
+    }
+    // Update checkbox states from edge data
+    if (dom.doorCheckbox) dom.doorCheckbox.checked = !!edge.hasDoors;
     // Always show wall length row
     if (dom.edgeLengthRow) dom.edgeLengthRow.style.display = '';
     const edgePanel = document.getElementById('panel-edge');
@@ -2108,6 +2148,71 @@
     if (dom.edgeWinWidthUnit) dom.edgeWinWidthUnit.textContent = unit;
     if (dom.edgeWinHeightUnit) dom.edgeWinHeightUnit.textContent = unit;
     if (dom.ceilingManualAreaUnit) dom.ceilingManualAreaUnit.textContent = unit + "²";
+  }
+
+  // --------------------------
+  // Validation
+  // --------------------------
+  function validateSpace(space) {
+    const issues = [];
+    
+    // 1. Avg Ceiling Height is always required
+    if (space.ceilingHeight === null || space.ceilingHeight === undefined || space.ceilingHeight === '') {
+      issues.push("Avg Ceiling Height");
+    }
+    
+    // 2. Ceiling validation (if "Same Ceiling and Floor Area" is unchecked)
+    if (!space.ceilingSameAsFloor) {
+      if (space.ceilingManualOverride) {
+        // Manual entry mode: only check if manual value is provided
+        if (space.ceilingManualArea == null || space.ceilingManualArea === '') {
+          issues.push("Manual ceiling area");
+        }
+      } else {
+        // Polygon mode: check if ceiling polygon exists
+        const hasCeilingPolygon = space.ceilingVertices && space.ceilingVertices.length >= 3;
+        if (!hasCeilingPolygon) {
+          issues.push("Define ceiling polygon");
+        }
+      }
+    }
+    
+    // 3. Skylight validation
+    if (space.hasSkylight) {
+      if (space.skylightArea === null || space.skylightArea === undefined || space.skylightArea === '') {
+        issues.push("Skylight area");
+      }
+    }
+    
+    // 4. Edge validation (exterior walls)
+    if (space.edges && Array.isArray(space.edges)) {
+      space.edges.forEach((edge, idx) => {
+        if (edge.isExterior) {
+          // Wall height required
+          if (edge.height === null || edge.height === undefined || edge.height === '') {
+            issues.push(`Edge ${idx + 1}: Wall height`);
+          }
+          
+          // Window dimensions required (0 is allowed - means no windows)
+          if (edge.winWidth === null || edge.winWidth === undefined || edge.winWidth === '') {
+            issues.push(`Edge ${idx + 1}: Window width`);
+          }
+          if (edge.winHeight === null || edge.winHeight === undefined || edge.winHeight === '') {
+            issues.push(`Edge ${idx + 1}: Window height`);
+          }
+          
+          // Door quantity required if doors checkbox is checked
+          if (edge.hasDoors) {
+            // Check if doorQty is missing or not a valid number (0 is allowed as a valid value)
+            if (edge.doorQty === null || edge.doorQty === undefined || edge.doorQty === '' || !Number.isFinite(edge.doorQty)) {
+              issues.push(`Edge ${idx + 1}: Door quantity`);
+            }
+          }
+        }
+      });
+    }
+    
+    return issues;
   }
 
   // --------------------------
@@ -2467,6 +2572,27 @@
       return;
     }
 
+    // Validate all spaces are complete before export
+    let hasIncompleteSpaces = false;
+    const incompleteSpaceNames = [];
+    
+    AppState.floors.forEach(floor => {
+      floor.spaces.forEach(space => {
+        const issues = validateSpace(space);
+        if (issues.length > 0) {
+          hasIncompleteSpaces = true;
+          incompleteSpaceNames.push(`${space.name || 'Room'} (${floor.name})`);
+        }
+      });
+    });
+    
+    if (hasIncompleteSpaces) {
+      alert(`Cannot export: Some spaces are incomplete. Please check the Spaces tab and complete all required fields.\n\nIncomplete spaces:\n• ${incompleteSpaceNames.join('\n• ')}`);
+      // Automatically open the Spaces tab to help user
+      showTab('tab-spaces');
+      return;
+    }
+
     const wb = XLSX.utils.book_new();
 
     AppState.floors.forEach(floor => {
@@ -2578,6 +2704,7 @@
       const space0 = floor0?.spaces.find(s => s.id === selectedSpaceId);
       if (space0) space0.ceilingHeight = undefined;
       if (dom.spaceCeiling) dom.spaceCeiling.classList.add('input-error');
+      renderSpacesList();
       saveState();
       return;
     }
@@ -2586,6 +2713,7 @@
     if (!space) return;
     space.ceilingHeight = val;
     if (dom.spaceCeiling) dom.spaceCeiling.classList.remove('input-error');
+    renderSpacesList();
     saveState();
   });
 
@@ -2603,6 +2731,7 @@
       space.ceilingHeight = val;
       if (dom.spaceCeiling) dom.spaceCeiling.classList.remove('input-error');
     }
+    renderSpacesList();
     saveState();
   });
 
@@ -2616,6 +2745,8 @@
     if (floor && selectedSpaceId) updateEdgeOverlaysForSpace(selectedSpaceId);
     // Also refresh panel enablement and error coloring immediately
     updateEdgePanelFromSelection();
+    // Update validation display
+    renderSpacesList();
   });
 
   dom.edgeHeight.addEventListener("change", () => {
@@ -2700,10 +2831,14 @@
       const edge = getSelectedEdge();
       const floor = activeFloor();
       if (!edge || !floor) return;
-      // Show/hide row
+      // Store flag and show/hide row
+      edge.hasDoors = !!doorToggleEl.checked;
       const show = !!doorToggleEl.checked;
       const row = document.getElementById('edgeDoorRow');
       if (row) row.style.display = show ? '' : 'none';
+      // Update validation display
+      renderSpacesList();
+      updateEdgePanelFromSelection();
       saveState();
     });
   }
@@ -2732,7 +2867,15 @@
       const edge = getSelectedEdge();
       if (!edge) return;
       const v = parseInt(dom.doorQty.value, 10);
-      edge.doorQty = Number.isFinite(v) && v >= 0 ? v : 0;
+      edge.doorQty = Number.isFinite(v) && v >= 0 ? v : undefined;
+      // Update error styling immediately
+      if (edge.hasDoors && (dom.doorQty.value === "" || dom.doorQty.value == null)) {
+        dom.doorQty.classList.add('input-error');
+      } else {
+        dom.doorQty.classList.remove('input-error');
+      }
+      // Update validation display
+      renderSpacesList();
       saveState();
     });
   }
@@ -2754,6 +2897,9 @@
       if (!space) return;
       space.hasSkylight = !!dom.skylightCheckbox.checked;
       if (dom.skylightAreaRow) dom.skylightAreaRow.style.display = space.hasSkylight ? '' : 'none';
+      // Update validation display and error styling
+      renderSpacesList();
+      updateSpacePanel(space);
       saveState();
     });
   }
@@ -2765,6 +2911,14 @@
       if (!space) return;
       const v = parseFloat(dom.skylightArea.value);
       space.skylightArea = isFinite(v) && v >= 0 ? v : undefined;
+      // Update error styling immediately
+      if (space.hasSkylight && (dom.skylightArea.value === "" || dom.skylightArea.value == null)) {
+        dom.skylightArea.classList.add('input-error');
+      } else {
+        dom.skylightArea.classList.remove('input-error');
+      }
+      // Update validation display
+      renderSpacesList();
       saveState();
     });
   }
@@ -2791,6 +2945,7 @@
       // When unchecked: show ceiling controls and ceiling polygon
       updateCeilingVisibility(space);
       updateSpacePanel(space);
+      renderSpacesList(); // Update validation display
       saveState();
     });
   }
@@ -2837,6 +2992,7 @@
         space.ceilingManualArea = null;
       }
       updateSpacePanel(space);
+      renderSpacesList(); // Update validation display
       saveState();
     });
   }
@@ -2859,6 +3015,7 @@
       }
       
       updateSpacePanel(space);
+      renderSpacesList(); // Update validation display
       saveState();
     });
   }
@@ -2880,6 +3037,7 @@
     recalcSpaceDerived(space);
     updateSpacePanel(space);
     updateEdgePanelFromSelection();
+    renderSpacesList();
     saveState();
   }
 
@@ -3219,6 +3377,64 @@
     }
   });
 
+  // Navigate to a specific validation issue
+  function navigateToIssue(space, issue) {
+    // First, select the space
+    const poly = spaceIdToPolygon.get(space.id);
+    if (poly) {
+      canvas.setActiveObject(poly);
+      selectSpace(space.id);
+      canvas.renderAll();
+    }
+    
+    // Open Properties tab
+    showTab('tab-properties');
+    
+    // Wait for tab to open, then scroll to the relevant section
+    setTimeout(() => {
+      const propertiesPanel = document.getElementById('overlay-properties');
+      if (!propertiesPanel) return;
+      
+      let targetElement = null;
+      
+      // Parse the issue to determine what to select and scroll to
+      if (issue.includes('Edge')) {
+        // Extract edge number (e.g., "Edge 2: Wall height" -> 2)
+        const match = issue.match(/Edge (\d+):/);
+        if (match) {
+          const edgeIdx = parseInt(match[1], 10) - 1; // Convert to 0-based index
+          
+          // Select the edge
+          if (space.edges && space.edges[edgeIdx] !== undefined) {
+            selectedEdgeIndex = edgeIdx;
+            const edgePoly = spaceIdToPolygon.get(space.id);
+            if (edgePoly) {
+              const absPts = getPolygonAbsolutePoints(edgePoly);
+              highlightSelectedEdge(absPts, edgeIdx);
+            }
+            updateEdgePanelFromSelection();
+            setStatus(`Edge ${edgeIdx + 1} selected - please fill in required field.`);
+            
+            // Scroll to edge properties panel
+            targetElement = document.getElementById('panel-edge');
+          }
+        }
+      }
+      // If it's a space-level issue, scroll to space properties
+      else {
+        setStatus(`Space selected - please fill in required field.`);
+        targetElement = document.getElementById('panel-space');
+      }
+      
+      // Scroll the target element into view within the properties panel
+      if (targetElement && propertiesPanel) {
+        propertiesPanel.scrollTop = 0; // Reset scroll first
+        const elementTop = targetElement.offsetTop;
+        propertiesPanel.scrollTop = elementTop - 10; // 10px padding from top
+      }
+    }, 100); // Small delay to ensure tab is fully opened
+  }
+  
   // Render Spaces list
   function renderSpacesList() {
     if (!dom.spacesList) return;
@@ -3230,6 +3446,10 @@
       return;
     }
     floor.spaces.forEach(space => {
+      // Validate space
+      const issues = validateSpace(space);
+      const isComplete = issues.length === 0;
+      
       // Create wrapper for space item
       const itemDiv = document.createElement('div');
       itemDiv.className = 'space-list-item';
@@ -3247,6 +3467,54 @@
         }
       });
       itemDiv.appendChild(btn);
+      
+      // Add validation status below button
+      const statusDiv = document.createElement('div');
+      statusDiv.className = 'space-validation-status';
+      if (isComplete) {
+        statusDiv.textContent = 'Complete';
+        statusDiv.classList.add('complete');
+      } else {
+        // Create collapsible incomplete section
+        const headerDiv = document.createElement('div');
+        headerDiv.className = 'validation-header';
+        headerDiv.textContent = `Incomplete (${issues.length})`;
+        headerDiv.addEventListener('click', () => {
+          detailsDiv.classList.toggle('collapsed');
+          headerDiv.classList.toggle('collapsed');
+        });
+        statusDiv.appendChild(headerDiv);
+        
+        const detailsDiv = document.createElement('div');
+        detailsDiv.className = 'validation-details collapsed';
+        
+        issues.forEach(issue => {
+          const issueRow = document.createElement('div');
+          issueRow.className = 'validation-issue-row';
+          
+          // Parse issue to extract field name and context (edge index if present)
+          const issueText = issue.replace(' required', '');
+          const label = document.createElement('span');
+          label.textContent = `• ${issueText}`;
+          label.className = 'validation-issue-label';
+          
+          const goToBtn = document.createElement('button');
+          goToBtn.textContent = 'Go To';
+          goToBtn.className = 'validation-goto-btn';
+          goToBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            navigateToIssue(space, issue);
+          });
+          
+          issueRow.appendChild(label);
+          issueRow.appendChild(goToBtn);
+          detailsDiv.appendChild(issueRow);
+        });
+        
+        statusDiv.appendChild(detailsDiv);
+        statusDiv.classList.add('incomplete');
+      }
+      itemDiv.appendChild(statusDiv);
       
       // Add action buttons if selected
       if (selectedSpaceId === space.id) {

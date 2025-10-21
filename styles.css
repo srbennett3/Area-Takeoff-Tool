@@ -532,3 +532,93 @@ button.active {
   white-space: nowrap;
 }
 
+/* Space validation status */
+.space-validation-status {
+  font-size: 10px;
+  margin-top: 4px;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+.space-validation-status.complete {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 4px 8px;
+}
+
+.space-validation-status.incomplete {
+  color: #fda4af;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.validation-header {
+  padding: 4px 8px;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+}
+
+.validation-header:hover {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.validation-header::before {
+  content: '▼';
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 8px;
+  transition: transform 0.2s ease;
+}
+
+.validation-header.collapsed::before {
+  transform: rotate(-90deg);
+}
+
+.validation-details {
+  padding: 4px 8px 8px 8px;
+  max-height: 500px;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+
+.validation-details.collapsed {
+  max-height: 0;
+  padding: 0 8px;
+}
+
+.validation-issue-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+  padding: 2px 0;
+}
+
+.validation-issue-label {
+  flex: 1;
+  font-size: 9px;
+  line-height: 1.3;
+}
+
+.validation-goto-btn {
+  padding: 2px 6px;
+  font-size: 9px;
+  background: rgba(37, 99, 235, 0.2);
+  color: #93c5fd;
+  border: 1px solid rgba(37, 99, 235, 0.4);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.validation-goto-btn:hover {
+  background: rgba(37, 99, 235, 0.3);
+  border-color: rgba(37, 99, 235, 0.6);
+}
+
