@@ -71,6 +71,7 @@
     floorSelect: document.getElementById("floorSelect"),
     btnAddFloor: document.getElementById("btnAddFloor"),
     btnDeleteFloor: document.getElementById("btnDeleteFloor"),
+    btnRenameFloor: document.getElementById("btnRenameFloor"),
     fileFloorImage: document.getElementById("fileFloorImage"),
 
     // Drawing
@@ -99,10 +100,18 @@
     edgeWinHeight: document.getElementById("edgeWinHeight"),
     edgeDirection: document.getElementById("edgeDirection"),
     edgeLength: document.getElementById("edgeLength"),
+    edgeWallArea: document.getElementById("edgeWallArea"),
     edgeWindowArea: document.getElementById("edgeWindowArea"),
     edgeHeightUnit: document.getElementById("edgeHeightUnit"),
     edgeWinWidthUnit: document.getElementById("edgeWinWidthUnit"),
     edgeWinHeightUnit: document.getElementById("edgeWinHeightUnit"),
+    edgeHeightRow: document.getElementById("edgeHeightRow"),
+    edgeWinWidthRow: document.getElementById("edgeWinWidthRow"),
+    edgeWinHeightRow: document.getElementById("edgeWinHeightRow"),
+    edgeDirectionRow: document.getElementById("edgeDirectionRow"),
+    edgeLengthRow: document.getElementById("edgeLengthRow"),
+    edgeWallAreaRow: document.getElementById("edgeWallAreaRow"),
+    edgeWindowAreaRow: document.getElementById("edgeWindowAreaRow"),
 
     // Export
     btnExportExcel: document.getElementById("btnExportExcel"),
@@ -191,7 +200,9 @@
 
   let isDrawingScale = false;
   let tempScalePoints = []; // 0 or 1 or 2 points during scale draw
-  const SCALE_LINE_WIDTH = 8;
+  const SCALE_LINE_WIDTH = 9;
+  const SCALE_VERTEX_RADIUS_PX = 4.5; // visual during draw
+  const COLOR_SCALE = "#ef4444"; // red
 
   let isInsertingVertex = false; // insert vertex mode
 
@@ -400,7 +411,7 @@
   function removeScaleVisuals() {
     const toRemove = canvas.getObjects().filter(o => {
       const t = o.get("fpType");
-      return t === "scaleLine" || t === "scaleLabel" || t === "scaleLabelLeader";
+      return t === "scaleLine" || t === "scaleLabel" || t === "scaleLabelLeader" || t === "scaleVertex";
     });
     toRemove.forEach(o => canvas.remove(o));
   }
@@ -409,17 +420,31 @@
     if (!floor?.scale?.line) return;
     const visible = floor.scale.visible !== false; // default visible
     const { x1, y1, x2, y2 } = floor.scale.line;
-    const line = new fabric.Line([x1, y1, x2, y2], {
-      stroke: "#f59e0b",
-      strokeWidth: SCALE_LINE_WIDTH,
+    // Render as centered filled rectangle
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const cx = (x1 + x2) / 2;
+    const cy = (y1 + y2) / 2;
+    const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+    const rect = new fabric.Rect({
+      left: cx,
+      top: cy,
+      originX: "center",
+      originY: "center",
+      width: len,
+      height: SCALE_LINE_WIDTH,
+      angle: angleDeg,
+      fill: COLOR_SCALE,
+      stroke: null,
       selectable: false,
       evented: false,
       hoverCursor: "default",
       visible
     });
-    line.set("fpType", "scaleLine");
-    canvas.add(line);
-    line.bringToFront();
+    rect.set("fpType", "scaleLine");
+    canvas.add(rect);
+    rect.bringToFront();
     canvas.renderAll();
   }
 
@@ -672,19 +697,37 @@
   }
 
   function enterScaleMode() {
+    // Toggle behavior: if already drawing scale, cancel
+    if (isDrawingScale) {
+      isDrawingScale = false;
+      tempScalePoints = [];
+      if (dom.btnScaleDraw) dom.btnScaleDraw.classList.remove('active');
+      // Restore previous scale visibility if a line exists
+      const fCancel = activeFloor();
+      if (fCancel?.scale?.line) {
+        fCancel.scale.visible = true;
+        removeScaleVisuals();
+        drawScaleLineForFloor(fCancel);
+        updateScaleToggleLabel();
+      }
+      setStatus("Scale draw cancelled. Previous scale kept.");
+      return;
+    }
     cancelAllModes();
     isDrawingScale = true;
     tempScalePoints = [];
     setStatus("Scale: click two points to create reference line.");
-    // Crosshair while drawing scale line
     canvas.defaultCursor = "crosshair";
-    const floor = activeFloor();
-    removeScaleVisuals();
-    if (floor?.scale) {
-      floor.scale.line = null;
-      floor.scale.visible = true;
-      saveState();
+    // Highlight button
+    if (dom.btnScaleDraw) dom.btnScaleDraw.classList.add('active');
+    // Hide existing scale line while drawing (auto-activate Hide Scale)
+    const f = activeFloor();
+    if (f?.scale?.line) {
+      f.scale.visible = false;
+      removeScaleVisuals();
+      updateScaleToggleLabel();
     }
+    // Do not clear existing scale data; only replace on completion
   }
 
   function cancelAllModes() {
@@ -865,6 +908,19 @@
     }
 
     if (isDrawingScale) {
+      // Draw temporary scale vertices in red, centered
+      const tempVtx = new fabric.Circle({
+        radius: SCALE_VERTEX_RADIUS_PX,
+        fill: COLOR_SCALE,
+        left: pointer.x,
+        top: pointer.y,
+        originX: "center",
+        originY: "center",
+        selectable: false,
+        evented: false,
+      });
+      tempVtx.set("fpType", "scaleVertex");
+      canvas.add(tempVtx);
       tempScalePoints.push({ x: pointer.x, y: pointer.y });
       if (tempScalePoints.length === 2) {
         // Compute scale from the two clicked points and override any existing scale line
@@ -875,7 +931,7 @@
         floor.scale.pixelLen = pixelLen;
         floor.scale.unit = dom.scaleUnit.value;
         floor.scale.line = { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y };
-        floor.scale.visible = true;
+        floor.scale.visible = true; // show new scale line
         // Ask user to enter realLen if blank
         if (!floor.scale.realLen || floor.scale.realLen <= 0) {
           const entered = window.prompt("Enter real-world length for the drawn scale (in selected unit):", "10");
@@ -887,10 +943,16 @@
         }
         saveState();
         recalcAllSpacesForFloor(floor);
+        // Remove temp vertices after line is created
+        const tempVertices = canvas.getObjects().filter(o => o.get && o.get("fpType") === "scaleVertex");
+        tempVertices.forEach(o => canvas.remove(o));
         // Draw visuals
         drawScaleLineForFloor(floor);
         updateScaleToggleLabel();
-        cancelAllModes();
+        // Exit scale mode but keep button state off
+        isDrawingScale = false;
+        if (dom.btnScaleDraw) dom.btnScaleDraw.classList.remove('active');
+        canvas.defaultCursor = "default";
         setStatus("Scale set. Reference line shown.");
         canvas.renderAll();
         return;
@@ -1082,6 +1144,11 @@
       }
       canvas.defaultCursor = "default";
     }
+    // Hide panels when no selection
+    const edgePanel = document.getElementById('panel-edge');
+    const spacePanel = document.getElementById('panel-space');
+    if (edgePanel) edgePanel.style.display = 'none';
+    if (spacePanel) spacePanel.style.display = 'none';
   }
 
   function findClosestEdgeIndex(points, clickPoint, tolerancePx) {
@@ -1266,8 +1333,6 @@
     updateSpacePanel(space);
     updateEdgePanelFromSelection();
     setSpaceInputsEnabled(!!space);
-    // Keep edge inputs enabled when an edge is currently selected
-    setEdgeInputsEnabled(selectedEdgeIndex != null);
     // Toggle Delete Space button visibility: only when exactly one space is selected
     if (dom.btnDeleteSpace) {
       const show = !!space && canvas.getActiveObjects().length === 1;
@@ -1282,6 +1347,11 @@
       const showDel = !!space && selectedVertexIndex != null;
       dom.btnDeleteVertex.style.display = showDel ? '' : 'none';
     }
+    // Toggle panel visibility
+    const edgePanel = document.getElementById('panel-edge');
+    const spacePanel = document.getElementById('panel-space');
+    if (edgePanel) edgePanel.style.display = (selectedEdgeIndex != null) ? '' : 'none';
+    if (spacePanel) spacePanel.style.display = (!!space) ? '' : 'none';
   }
 
   // --------------------------
@@ -1337,9 +1407,12 @@
       dom.edgeLength.textContent = "-";
       dom.edgeWindowArea.textContent = "-";
       setEdgeInputsEnabled(false);
+      if (dom.edgeIsExterior) dom.edgeIsExterior.disabled = true;
       if (dom.edgeHeight) dom.edgeHeight.classList.remove('input-error');
       if (dom.edgeWinWidth) dom.edgeWinWidth.classList.remove('input-error');
       if (dom.edgeWinHeight) dom.edgeWinHeight.classList.remove('input-error');
+      const edgePanel = document.getElementById('panel-edge');
+      if (edgePanel) edgePanel.style.display = 'none';
       return;
     }
     // If a space is selected but no explicit edge index, keep inputs disabled until an edge is selected
@@ -1353,9 +1426,12 @@
       dom.edgeLength.textContent = "-";
       dom.edgeWindowArea.textContent = "-";
       setEdgeInputsEnabled(false);
+      if (dom.edgeIsExterior) dom.edgeIsExterior.disabled = true;
     if (dom.edgeHeight) dom.edgeHeight.classList.remove('input-error');
     if (dom.edgeWinWidth) dom.edgeWinWidth.classList.remove('input-error');
     if (dom.edgeWinHeight) dom.edgeWinHeight.classList.remove('input-error');
+      const edgePanel = document.getElementById('panel-edge');
+      if (edgePanel) edgePanel.style.display = 'none';
       return;
     }
     const space = floor.spaces.find(s => s.id === selectedSpaceId);
@@ -1367,13 +1443,36 @@
     dom.edgeWinHeight.value = (edge.winHeight ?? "");
     dom.edgeDirection.value = edge.direction || "N";
     dom.edgeLength.textContent = formatWithUnit(edge.length, false);
+    const wallAreaFeet2 = clampNum(edge.length) * clampNum(edge.height);
+    dom.edgeWallArea.textContent = formatWithUnit(wallAreaFeet2, true, true);
     dom.edgeWindowArea.textContent = formatWithUnit(edge.winArea, true, true);
-    // Ensure the inputs are enabled when an edge is selected
-    setEdgeInputsEnabled(true);
-    // Mark empty edge textboxes as error when an edge is selected
-    if (dom.edgeHeight) (dom.edgeHeight.value === "" ? dom.edgeHeight.classList.add('input-error') : dom.edgeHeight.classList.remove('input-error'));
-    if (dom.edgeWinWidth) (dom.edgeWinWidth.value === "" ? dom.edgeWinWidth.classList.add('input-error') : dom.edgeWinWidth.classList.remove('input-error'));
-    if (dom.edgeWinHeight) (dom.edgeWinHeight.value === "" ? dom.edgeWinHeight.classList.add('input-error') : dom.edgeWinHeight.classList.remove('input-error'));
+    // Enable editing only when exterior is checked; always allow toggling exterior checkbox itself
+    const enableFields = !!edge.isExterior;
+    setEdgeInputsEnabled(enableFields);
+    if (dom.edgeIsExterior) dom.edgeIsExterior.disabled = false; // enabled only when an edge is selected
+    // Error highlight only when editable (exterior)
+    if (dom.edgeHeight) {
+      if (enableFields && dom.edgeHeight.value === "") dom.edgeHeight.classList.add('input-error'); else dom.edgeHeight.classList.remove('input-error');
+    }
+    if (dom.edgeWinWidth) {
+      if (enableFields && dom.edgeWinWidth.value === ""
+      ) dom.edgeWinWidth.classList.add('input-error'); else dom.edgeWinWidth.classList.remove('input-error');
+    }
+    if (dom.edgeWinHeight) {
+      if (enableFields && dom.edgeWinHeight.value === "") dom.edgeWinHeight.classList.add('input-error'); else dom.edgeWinHeight.classList.remove('input-error');
+    }
+    // Hide/show rows based on exterior
+    const rowDisplay = enableFields ? '' : 'none';
+    if (dom.edgeHeightRow) dom.edgeHeightRow.style.display = rowDisplay;
+    if (dom.edgeWinWidthRow) dom.edgeWinWidthRow.style.display = rowDisplay;
+    if (dom.edgeWinHeightRow) dom.edgeWinHeightRow.style.display = rowDisplay;
+    if (dom.edgeDirectionRow) dom.edgeDirectionRow.style.display = rowDisplay;
+    if (dom.edgeWallAreaRow) dom.edgeWallAreaRow.style.display = rowDisplay;
+    if (dom.edgeWindowAreaRow) dom.edgeWindowAreaRow.style.display = rowDisplay;
+    // Always show wall length row
+    if (dom.edgeLengthRow) dom.edgeLengthRow.style.display = '';
+    const edgePanel = document.getElementById('panel-edge');
+    if (edgePanel) edgePanel.style.display = '';
   }
 
   function formatWithUnit(value, isArea, showZero = false) {
@@ -1802,6 +1901,8 @@
     // Refresh overlays so persistent exterior color applies immediately
     const floor = activeFloor();
     if (floor && selectedSpaceId) updateEdgeOverlaysForSpace(selectedSpaceId);
+    // Also refresh panel enablement and error coloring immediately
+    updateEdgePanelFromSelection();
   });
 
   dom.edgeHeight.addEventListener("change", () => {
@@ -1958,6 +2059,10 @@
     if (!dom.btnScaleToggle || !floor) return;
     const isVisible = floor.scale?.visible !== false && !!floor.scale?.line;
     dom.btnScaleToggle.textContent = isVisible ? "Hide Scale" : "Show Scale";
+    const statusEl = document.getElementById('scaleStatus');
+    if (statusEl) {
+      if (!floor.scale?.line) statusEl.textContent = "No scale defined"; else statusEl.textContent = "";
+    }
   }
 
   if (dom.btnScaleToggle) {
@@ -2019,6 +2124,19 @@
   dom.btnDeleteFloor.addEventListener("click", () => {
     deleteActiveFloor();
   });
+
+  if (dom.btnRenameFloor) {
+    dom.btnRenameFloor.addEventListener("click", () => {
+      const floor = activeFloor();
+      if (!floor) { alert("Add a floor first."); return; }
+      const newName = promptText("Enter new floor name:", floor.name || "");
+      if (!newName) return;
+      floor.name = newName;
+      saveState();
+      updateFloorSelectOptions();
+      setStatus(`Renamed floor to "${newName}".`);
+    });
+  }
 
   dom.floorSelect.addEventListener("change", async () => {
     const floorId = dom.floorSelect.value;

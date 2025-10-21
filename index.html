@@ -19,6 +19,14 @@
         <span class="logo" aria-hidden="true">📐</span>
         <h1>Area Takeoff Tool</h1>
       </div>
+      <div class="header-floors">
+        <label for="floorSelect" class="visually-hidden">Active Floor</label>
+        <select id="floorSelect" aria-label="Select Active Floor"></select>
+        <button id="btnRenameFloor" aria-label="Rename current floor">Rename</button>
+        <button id="btnAddFloor" aria-label="Add new floor">Add Floor</button>
+        <button id="btnDeleteFloor" class="danger" aria-label="Delete current floor">Delete Floor</button>
+        <input id="fileFloorImage" type="file" accept="image/*" aria-label="Floorplan Image Upload" style="display:none" />
+      </div>
       <div class="project-name">
         <input id="projectName" class="project-name-input" type="text" placeholder="Project Title Click To Enter" aria-label="Project name (inline editable)" />
       </div>
@@ -29,52 +37,54 @@
 
     <main class="app-main" style="min-height:0;">
       <aside class="sidebar" aria-label="Controls Sidebar">
-        <section class="panel" aria-labelledby="floor-mgmt-title">
-          <h2 id="floor-mgmt-title">Floors</h2>
-          <div class="form-row">
-            <label for="floorSelect">Active Floor</label>
-            <select id="floorSelect" aria-label="Select Active Floor"></select>
+        <section class="panel" aria-labelledby="edge-props-title" id="panel-edge" style="display:none">
+          <h2 id="edge-props-title">Edge (Wall) Properties</h2>
+          <div class="form-row" id="edgeExteriorRow">
+            <label for="edgeIsExterior">Is Exterior</label>
+            <input id="edgeIsExterior" type="checkbox" aria-label="Is exterior wall" disabled />
           </div>
-          <div class="row-buttons">
-            <button id="btnAddFloor" aria-label="Add new floor">Add Floor</button>
-            <button id="btnDeleteFloor" class="danger" aria-label="Delete current floor">Delete Floor</button>
+          <div class="form-row" id="edgeHeightRow">
+            <label for="edgeHeight">Wall Height</label>
+            <div class="input-with-unit">
+              <input id="edgeHeight" type="number" step="0.0001" min="0" aria-label="Wall height" disabled />
+              <span id="edgeHeightUnit" class="unit-suffix">feet</span>
+            </div>
           </div>
-          <input id="fileFloorImage" type="file" accept="image/*" aria-label="Floorplan Image Upload" style="display:none" />
-        </section>
-
-        <section class="panel" aria-labelledby="drawing-tools-title">
-          <h2 id="drawing-tools-title">Drawing Tools</h2>
-          <div class="row-buttons">
-            <button id="btnDrawSpace" aria-label="Draw new space polygon">Draw New Space</button>
-            <button id="btnDeleteSpace" class="danger" aria-label="Delete selected space" style="display:none">Delete Space</button>
+          <div class="form-row" id="edgeWinWidthRow">
+            <label for="edgeWinWidth">Total Window Width</label>
+            <div class="input-with-unit">
+              <input id="edgeWinWidth" type="number" step="0.0001" min="0" aria-label="Total window width" disabled />
+              <span id="edgeWinWidthUnit" class="unit-suffix">feet</span>
+            </div>
           </div>
-          <div class="row-buttons">
-            <button id="btnInsertVertex" aria-label="Insert vertex on selected space" style="display:none">Insert Vertex</button>
-            <button id="btnDeleteVertex" class="danger" aria-label="Delete selected vertex" style="display:none">Delete Vertex</button>
+          <div class="form-row" id="edgeWinHeightRow">
+            <label for="edgeWinHeight">Total Window Height</label>
+            <div class="input-with-unit">
+              <input id="edgeWinHeight" type="number" step="0.0001" min="0" aria-label="Total window height" disabled />
+              <span id="edgeWinHeightUnit" class="unit-suffix">feet</span>
+            </div>
           </div>
-        </section>
-
-        <section class="panel" aria-labelledby="scale-title">
-          <h2 id="scale-title">Scale</h2>
-          <div class="row-buttons">
-            <button id="btnScaleDraw" aria-label="Draw new scale reference line">Draw Scale</button>
-            <button id="btnScaleToggle" aria-label="Show or hide current scale line">Hide Scale</button>
-          </div>
-          <div class="form-row">
-            <label for="scaleLength">Real Length</label>
-            <input id="scaleLength" type="number" step="0.0001" min="0" aria-label="Scale real-world length" />
-          </div>
-          <div class="form-row">
-            <label for="scaleUnit">Unit</label>
-            <select id="scaleUnit" aria-label="Scale unit">
-              <option value="feet">ft</option>
-              <option value="meters">m</option>
+          <div class="form-row" id="edgeDirectionRow">
+            <label for="edgeDirection">Direction</label>
+            <select id="edgeDirection" aria-label="Wall direction" disabled>
+              <option value="N">N</option>
+              <option value="NE">NE</option>
+              <option value="E">E</option>
+              <option value="SE">SE</option>
+              <option value="S">S</option>
+              <option value="SW">SW</option>
+              <option value="W">W</option>
+              <option value="NW">NW</option>
             </select>
           </div>
-          <div class="hint">Use Scale Tool to draw the reference line.</div>
+          <div class="readonly-list">
+            <div id="edgeLengthRow"><span class="label">Wall Length:</span> <span id="edgeLength">-</span></div>
+            <div id="edgeWallAreaRow"><span class="label">Wall Area:</span> <span id="edgeWallArea">-</span></div>
+            <div id="edgeWindowAreaRow"><span class="label">Window Area:</span> <span id="edgeWindowArea">-</span></div>
+          </div>
         </section>
 
-        <section class="panel" aria-labelledby="space-props-title">
+        <section class="panel" aria-labelledby="space-props-title" id="panel-space" style="display:none">
           <h2 id="space-props-title">Space Properties</h2>
           <div class="form-row">
             <label for="spaceName">Room Name</label>
@@ -93,51 +103,39 @@
           </div>
         </section>
 
-        <section class="panel" aria-labelledby="edge-props-title">
-          <h2 id="edge-props-title">Edge (Wall) Properties</h2>
-          <div class="form-row">
-            <label for="edgeIsExterior">Is Exterior</label>
-            <input id="edgeIsExterior" type="checkbox" aria-label="Is exterior wall" disabled />
+        <section class="panel" aria-labelledby="drawing-tools-title" id="panel-draw">
+          <h2 id="drawing-tools-title">Drawing Tools</h2>
+          <div class="row-buttons">
+            <button id="btnDrawSpace" aria-label="Draw new space polygon">Draw New Space</button>
+            <button id="btnDeleteSpace" class="danger" aria-label="Delete selected space" style="display:none">Delete Space</button>
           </div>
-          <div class="form-row">
-            <label for="edgeHeight">Wall Height</label>
-            <div class="input-with-unit">
-              <input id="edgeHeight" type="number" step="0.0001" min="0" aria-label="Wall height" disabled />
-              <span id="edgeHeightUnit" class="unit-suffix">feet</span>
-            </div>
-          </div>
-          <div class="form-row">
-            <label for="edgeWinWidth">Total Window Width</label>
-            <div class="input-with-unit">
-              <input id="edgeWinWidth" type="number" step="0.0001" min="0" aria-label="Total window width" disabled />
-              <span id="edgeWinWidthUnit" class="unit-suffix">feet</span>
-            </div>
-          </div>
-          <div class="form-row">
-            <label for="edgeWinHeight">Total Window Height</label>
-            <div class="input-with-unit">
-              <input id="edgeWinHeight" type="number" step="0.0001" min="0" aria-label="Total window height" disabled />
-              <span id="edgeWinHeightUnit" class="unit-suffix">feet</span>
-            </div>
-          </div>
-          <div class="form-row">
-            <label for="edgeDirection">Direction</label>
-            <select id="edgeDirection" aria-label="Wall direction" disabled>
-              <option value="N">N</option>
-              <option value="NE">NE</option>
-              <option value="E">E</option>
-              <option value="SE">SE</option>
-              <option value="S">S</option>
-              <option value="SW">SW</option>
-              <option value="W">W</option>
-              <option value="NW">NW</option>
-            </select>
-          </div>
-          <div class="readonly-list">
-            <div><span class="label">Wall Length:</span> <span id="edgeLength">-</span></div>
-            <div><span class="label">Window Area:</span> <span id="edgeWindowArea">-</span></div>
+          <div class="row-buttons">
+            <button id="btnInsertVertex" aria-label="Insert vertex on selected space" style="display:none">Insert Vertex</button>
+            <button id="btnDeleteVertex" class="danger" aria-label="Delete selected vertex" style="display:none">Delete Vertex</button>
           </div>
         </section>
+
+        <section class="panel" aria-labelledby="scale-title" id="panel-scale">
+          <h2 id="scale-title">Scale</h2>
+          <div class="row-buttons">
+            <button id="btnScaleDraw" aria-label="Draw new scale reference line">Draw Scale</button>
+            <button id="btnScaleToggle" aria-label="Show or hide current scale line">Hide Scale</button>
+            <span id="scaleStatus" class="hint" aria-live="polite"></span>
+          </div>
+          <div class="form-row">
+            <label for="scaleLength">Real Length</label>
+            <input id="scaleLength" type="number" step="0.0001" min="0" aria-label="Scale real-world length" />
+          </div>
+          <div class="form-row">
+            <label for="scaleUnit">Unit</label>
+            <select id="scaleUnit" aria-label="Scale unit">
+              <option value="feet">ft</option>
+              <option value="meters">m</option>
+            </select>
+          </div>
+          <div class="hint">Use Scale Tool to draw the reference line.</div>
+        </section>
+
       </aside>
 
       <section class="canvas-wrap" aria-label="Canvas Area">
