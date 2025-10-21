@@ -105,6 +105,18 @@
     edgeHeightUnit: document.getElementById("edgeHeightUnit"),
     edgeWinWidthUnit: document.getElementById("edgeWinWidthUnit"),
     edgeWinHeightUnit: document.getElementById("edgeWinHeightUnit"),
+    wallTypeSelect: document.getElementById("wallTypeSelect"),
+    windowTypeSelect: document.getElementById("windowTypeSelect"),
+    edgeWindowTypeRow: document.getElementById("edgeWindowTypeRow"),
+    doorCheckbox: document.getElementById("doorCheckbox"),
+    doorQty: document.getElementById("doorQty"),
+    doorTypeSelect: document.getElementById("doorTypeSelect"),
+    edgeDoorRow: document.getElementById("edgeDoorRow"),
+    // Space skylight
+    skylightCheckbox: document.getElementById("skylightCheckbox"),
+    skylightArea: document.getElementById("skylightArea"),
+    skylightTypeSelect: document.getElementById("skylightTypeSelect"),
+    skylightAreaRow: document.getElementById("skylightAreaRow"),
     edgeHeightRow: document.getElementById("edgeHeightRow"),
     edgeWinWidthRow: document.getElementById("edgeWinWidthRow"),
     edgeWinHeightRow: document.getElementById("edgeWinHeightRow"),
@@ -112,6 +124,17 @@
     edgeLengthRow: document.getElementById("edgeLengthRow"),
     edgeWallAreaRow: document.getElementById("edgeWallAreaRow"),
     edgeWindowAreaRow: document.getElementById("edgeWindowAreaRow"),
+    edgeDoorToggleRow: document.getElementById("edgeDoorToggleRow"),
+
+    // Type Manager containers and buttons
+    typeMgrWall: document.getElementById("typeMgrWall"),
+    typeMgrWindow: document.getElementById("typeMgrWindow"),
+    typeMgrSkylight: document.getElementById("typeMgrSkylight"),
+    typeMgrDoor: document.getElementById("typeMgrDoor"),
+    btnAddWallType: document.getElementById("btnAddWallType"),
+    btnAddWindowType: document.getElementById("btnAddWindowType"),
+    btnAddSkylightType: document.getElementById("btnAddSkylightType"),
+    btnAddDoorType: document.getElementById("btnAddDoorType"),
 
     // Export
     btnExportExcel: document.getElementById("btnExportExcel"),
@@ -182,6 +205,12 @@
     displayUnit: "feet",
     floors: [], // [{ id, name, imageSrc, backgroundFit, scale: { realLen, pixelLen, unit, line }, spaces: [Space] }]
     activeFloorId: null,
+    types: {
+      wall: [{ id: uid("walltype"), name: "Wall Type 1" }],
+      window: [{ id: uid("wintype"), name: "Window Type 1" }],
+      skylight: [{ id: uid("skytype"), name: "Skylight Type 1" }],
+      door: [{ id: uid("doortype"), name: "Door Type 1" }],
+    },
   };
 
   // Fabric canvas
@@ -244,6 +273,7 @@
           AppState.activeFloorId = parsed.activeFloorId || (parsed.floors[0]?.id ?? null);
           if (parsed.projectName) AppState.projectName = parsed.projectName;
           if (parsed.displayUnit) AppState.displayUnit = parsed.displayUnit;
+          if (parsed.types) AppState.types = parsed.types;
           // migrate scale to internal feet
           AppState.floors.forEach(f => {
             if (!f.scale) return;
@@ -1284,6 +1314,9 @@
   function setSpaceInputsEnabled(enabled) {
     dom.spaceName.disabled = !enabled;
     dom.spaceCeiling.disabled = !enabled;
+    if (dom.skylightCheckbox) dom.skylightCheckbox.disabled = !enabled;
+    if (dom.skylightArea) dom.skylightArea.disabled = !enabled;
+    if (dom.skylightTypeSelect) dom.skylightTypeSelect.disabled = !enabled;
   }
 
   function setEdgeInputsEnabled(enabled) {
@@ -1292,6 +1325,11 @@
     dom.edgeWinWidth.disabled = !enabled;
     dom.edgeWinHeight.disabled = !enabled;
     dom.edgeDirection.disabled = !enabled;
+    if (dom.wallTypeSelect) dom.wallTypeSelect.disabled = !enabled;
+    if (dom.windowTypeSelect) dom.windowTypeSelect.disabled = !enabled;
+    if (dom.doorCheckbox) dom.doorCheckbox.disabled = !enabled;
+    if (dom.doorQty) dom.doorQty.disabled = !enabled;
+    if (dom.doorTypeSelect) dom.doorTypeSelect.disabled = !enabled;
   }
 
   function selectSpaceByPolygon(poly) {
@@ -1469,6 +1507,12 @@
     if (dom.edgeDirectionRow) dom.edgeDirectionRow.style.display = rowDisplay;
     if (dom.edgeWallAreaRow) dom.edgeWallAreaRow.style.display = rowDisplay;
     if (dom.edgeWindowAreaRow) dom.edgeWindowAreaRow.style.display = rowDisplay;
+    const windowTypeRow = document.getElementById('edgeWindowTypeRow');
+    if (windowTypeRow) windowTypeRow.style.display = rowDisplay;
+    // Doors checkbox toggle only visible when exterior is enabled
+    if (dom.edgeDoorToggleRow) dom.edgeDoorToggleRow.style.display = rowDisplay;
+    // Doors row follows the door checkbox when exterior is enabled
+    if (dom.edgeDoorRow) dom.edgeDoorRow.style.display = (enableFields && dom.doorCheckbox && dom.doorCheckbox.checked) ? '' : 'none';
     // Always show wall length row
     if (dom.edgeLengthRow) dom.edgeLengthRow.style.display = '';
     const edgePanel = document.getElementById('panel-edge');
@@ -1980,6 +2024,92 @@
     saveState();
   });
 
+  // Doors toggle
+  const doorToggleEl = document.getElementById('doorCheckbox');
+  if (doorToggleEl) {
+    doorToggleEl.addEventListener('change', () => {
+      const edge = getSelectedEdge();
+      const floor = activeFloor();
+      if (!edge || !floor) return;
+      // Show/hide row
+      const show = !!doorToggleEl.checked;
+      const row = document.getElementById('edgeDoorRow');
+      if (row) row.style.display = show ? '' : 'none';
+      saveState();
+    });
+  }
+
+  // Wall/Window type selects (store selected names on edge)
+  if (dom.wallTypeSelect) {
+    dom.wallTypeSelect.addEventListener('change', () => {
+      const edge = getSelectedEdge();
+      if (!edge) return;
+      edge.wallType = dom.wallTypeSelect.value || '';
+      saveState();
+    });
+  }
+  if (dom.windowTypeSelect) {
+    dom.windowTypeSelect.addEventListener('change', () => {
+      const edge = getSelectedEdge();
+      if (!edge) return;
+      edge.windowType = dom.windowTypeSelect.value || '';
+      saveState();
+    });
+  }
+
+  // Doors qty/type
+  if (dom.doorQty) {
+    dom.doorQty.addEventListener('input', () => {
+      const edge = getSelectedEdge();
+      if (!edge) return;
+      const v = parseInt(dom.doorQty.value, 10);
+      edge.doorQty = Number.isFinite(v) && v >= 0 ? v : 0;
+      saveState();
+    });
+  }
+  if (dom.doorTypeSelect) {
+    dom.doorTypeSelect.addEventListener('change', () => {
+      const edge = getSelectedEdge();
+      if (!edge) return;
+      edge.doorType = dom.doorTypeSelect.value || '';
+      saveState();
+    });
+  }
+
+  // Skylight controls on space
+  if (dom.skylightCheckbox) {
+    dom.skylightCheckbox.addEventListener('change', () => {
+      const floor = activeFloor();
+      if (!floor || !selectedSpaceId) return;
+      const space = floor.spaces.find(s => s.id === selectedSpaceId);
+      if (!space) return;
+      space.hasSkylight = !!dom.skylightCheckbox.checked;
+      if (dom.skylightAreaRow) dom.skylightAreaRow.style.display = space.hasSkylight ? '' : 'none';
+      saveState();
+    });
+  }
+  if (dom.skylightArea) {
+    dom.skylightArea.addEventListener('input', () => {
+      const floor = activeFloor();
+      if (!floor || !selectedSpaceId) return;
+      const space = floor.spaces.find(s => s.id === selectedSpaceId);
+      if (!space) return;
+      const v = parseFloat(dom.skylightArea.value);
+      space.skylightArea = isFinite(v) && v >= 0 ? v : undefined;
+      saveState();
+    });
+  }
+  if (dom.skylightTypeSelect) {
+    dom.skylightTypeSelect.addEventListener('change', () => {
+      const floor = activeFloor();
+      if (!floor || !selectedSpaceId) return;
+      const space = floor.spaces.find(s => s.id === selectedSpaceId);
+      if (!space) return;
+      space.skylightType = dom.skylightTypeSelect.value || '';
+      saveState();
+    });
+  }
+
   function getSelectedEdge() {
     const floor = activeFloor();
     if (!floor || !selectedSpaceId || selectedEdgeIndex == null) return null;
@@ -2097,6 +2227,184 @@
   if (dom.btnDeleteVertex) {
     dom.btnDeleteVertex.addEventListener("click", () => {
       deleteSelectedVertex();
+    });
+  }
+
+  // --------------------------
+  // Type Manager
+  // --------------------------
+  let selectedTypeKey = null; // "wall:id", "window:id", etc
+  
+  function renderTypeManager() {
+    const categories = ['wall', 'window', 'skylight', 'door'];
+    categories.forEach(cat => {
+      const containerEl = dom[`typeMgr${cat.charAt(0).toUpperCase() + cat.slice(1)}`];
+      if (!containerEl) return;
+      containerEl.innerHTML = '';
+      const types = AppState.types[cat] || [];
+      types.forEach(t => {
+        const typeKey = `${cat}:${t.id}`;
+        const isSelected = selectedTypeKey === typeKey;
+        
+        // Wrap each type in a container
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'type-item';
+        
+        const btn = document.createElement('button');
+        btn.textContent = t.name;
+        btn.dataset.typeKey = typeKey;
+        btn.className = 'type-btn';
+        if (isSelected) btn.classList.add('active');
+        btn.addEventListener('click', () => selectType(typeKey));
+        itemDiv.appendChild(btn);
+        
+        // Add controls below if selected
+        if (isSelected) {
+          const controls = document.createElement('div');
+          controls.className = 'type-mgr-controls';
+          const btnRename = document.createElement('button');
+          btnRename.textContent = 'Rename';
+          btnRename.addEventListener('click', () => renameType(cat, t.id));
+          const btnDelete = document.createElement('button');
+          btnDelete.textContent = 'Delete';
+          btnDelete.className = 'danger';
+          btnDelete.addEventListener('click', () => deleteType(cat, t.id));
+          controls.appendChild(btnRename);
+          controls.appendChild(btnDelete);
+          itemDiv.appendChild(controls);
+        }
+        
+        containerEl.appendChild(itemDiv);
+      });
+    });
+  }
+
+  function selectType(key) {
+    // Toggle: if clicking same type, deselect
+    if (selectedTypeKey === key) {
+      selectedTypeKey = null;
+    } else {
+      selectedTypeKey = key;
+    }
+    renderTypeManager(); // re-render to update highlight
+  }
+
+  // updateTypeManagerControls no longer needed - controls are inline now
+
+  function addType(cat) {
+    const name = promptText(`Enter name for new ${cat} type:`, `${cat.charAt(0).toUpperCase() + cat.slice(1)} Type ${AppState.types[cat].length + 1}`);
+    if (!name) return;
+    const newType = { id: uid(`${cat}type`), name };
+    AppState.types[cat].push(newType);
+    saveState();
+    renderTypeManager();
+    populateTypeDropdowns();
+    setStatus(`Added ${cat} type "${name}".`);
+  }
+
+  function renameType(cat, id) {
+    const types = AppState.types[cat];
+    const t = types.find(x => x.id === id);
+    if (!t) return;
+    const newName = promptText(`Rename ${cat} type:`, t.name);
+    if (!newName) return;
+    t.name = newName;
+    saveState();
+    renderTypeManager();
+    populateTypeDropdowns();
+    setStatus(`Renamed to "${newName}".`);
+  }
+
+  function deleteType(cat, id) {
+    const types = AppState.types[cat];
+    if (types.length <= 1) { alert(`At least one ${cat} type must remain.`); return; }
+    const t = types.find(x => x.id === id);
+    if (!t) return;
+    if (!confirmAction(`Delete ${cat} type "${t.name}"?`)) return;
+    AppState.types[cat] = types.filter(x => x.id !== id);
+    selectedTypeKey = null;
+    saveState();
+    renderTypeManager();
+    populateTypeDropdowns();
+    setStatus(`Deleted ${cat} type.`);
+  }
+
+  function populateTypeDropdowns() {
+    // Populate wall type dropdown
+    if (dom.wallTypeSelect) {
+      dom.wallTypeSelect.innerHTML = '';
+      AppState.types.wall.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name;
+        dom.wallTypeSelect.appendChild(opt);
+      });
+    }
+    // Window type
+    if (dom.windowTypeSelect) {
+      dom.windowTypeSelect.innerHTML = '';
+      AppState.types.window.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name;
+        dom.windowTypeSelect.appendChild(opt);
+      });
+    }
+    // Skylight type
+    if (dom.skylightTypeSelect) {
+      dom.skylightTypeSelect.innerHTML = '';
+      AppState.types.skylight.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name;
+        dom.skylightTypeSelect.appendChild(opt);
+      });
+    }
+    // Door type
+    if (dom.doorTypeSelect) {
+      dom.doorTypeSelect.innerHTML = '';
+      AppState.types.door.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name;
+        dom.doorTypeSelect.appendChild(opt);
+      });
+    }
+  }
+
+  // Type Manager "Add Type" buttons
+  if (dom.btnAddWallType) {
+    dom.btnAddWallType.addEventListener('click', () => addType('wall'));
+  }
+  if (dom.btnAddWindowType) {
+    dom.btnAddWindowType.addEventListener('click', () => addType('window'));
+  }
+  if (dom.btnAddSkylightType) {
+    dom.btnAddSkylightType.addEventListener('click', () => addType('skylight'));
+  }
+  if (dom.btnAddDoorType) {
+    dom.btnAddDoorType.addEventListener('click', () => addType('door'));
+  }
+
+  // Deselect type when clicking outside Type Manager or on non-type-button elements
+  document.addEventListener('click', (e) => {
+    if (!selectedTypeKey) return;
+    const target = e.target;
+    // Keep selection if clicking on a type button or rename/delete controls
+    if (target && (target.classList.contains('type-btn') || target.closest('.type-mgr-controls'))) return;
+    // Deselect type
+    selectedTypeKey = null;
+    renderTypeManager();
+  });
+
+  // Type Manager collapse/expand
+  const typeMgrTitle = document.getElementById('type-mgr-title');
+  const typeMgrContent = document.getElementById('type-mgr-content');
+  if (typeMgrTitle && typeMgrContent) {
+    typeMgrTitle.addEventListener('click', () => {
+      const isCollapsed = typeMgrContent.classList.toggle('collapsed');
+      const icon = typeMgrTitle.querySelector('.collapse-icon');
+      if (icon) icon.textContent = isCollapsed ? '▶' : '▼';
     });
   }
 
@@ -2373,6 +2681,9 @@
     canvas.setHeight(DEFAULT_CANVAS_HEIGHT);
 
     loadState();
+    // Render Type Manager and populate dropdowns
+    renderTypeManager();
+    populateTypeDropdowns();
     // Initialize project header
     setProjectNameUI(AppState.projectName);
     if (dom.projectName) {
