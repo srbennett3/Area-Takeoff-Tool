@@ -829,7 +829,7 @@
     const f = activeFloor();
     if (f?.scale?.line) {
       f.scale.visible = false;
-      removeScaleVisuals();
+    removeScaleVisuals();
       updateScaleToggleLabel();
     }
     // Do not clear existing scale data; only replace on completion
@@ -1405,7 +1405,7 @@
           const ceilingIdx = findClosestEdgeIndex(ceilingPts, pointer, EDGE_HIT_BUFFER_PX);
           if (ceilingIdx !== null) {
             insertVertexAtCeilingEdge(selectedSpaceId, ceilingIdx, pointer);
-            isInsertingVertex = false;
+        isInsertingVertex = false;
             if (dom.btnInsertVertex) dom.btnInsertVertex.classList.remove('active');
             setStatus("Ceiling vertex inserted.");
             canvas.defaultCursor = "default";
@@ -1417,10 +1417,10 @@
           insertVertexAtEdge(selectedSpaceId, hoverEdgeIndex, pointer);
           isInsertingVertex = false;
           if (dom.btnInsertVertex) dom.btnInsertVertex.classList.remove('active');
-          setStatus("Vertex inserted.");
-          canvas.defaultCursor = "default";
-          return;
-        }
+        setStatus("Vertex inserted.");
+        canvas.defaultCursor = "default";
+        return;
+      }
       }
       // Clicked outside edge buffer - don't insert
       return;
@@ -2575,7 +2575,7 @@
     // Validate all spaces are complete before export
     let hasIncompleteSpaces = false;
     const incompleteSpaceNames = [];
-    
+
     AppState.floors.forEach(floor => {
       floor.spaces.forEach(space => {
         const issues = validateSpace(space);
@@ -2594,65 +2594,295 @@
     }
 
     const wb = XLSX.utils.book_new();
+      const unit = unitAbbrev();
 
     AppState.floors.forEach(floor => {
-      const unit = unitAbbrev();
-      // Build rows per space with required columns
-      const rows = floor.spaces.map(space => {
-        // Aggregate wall area and window area by direction (exterior only)
-        const dirKeys = ["N","NW","NE","S","SW","SE","E","W"]; // keep ordering consistent with requirements
-        const wallAreaByDir = Object.fromEntries(dirKeys.map(k => [k, 0]));
-        const winAreaByDir = Object.fromEntries(dirKeys.map(k => [k, 0]));
+      // Collect all spaces data in the new format
+      const allRows = [];
+      
+      floor.spaces.forEach(space => {
         ensureEdgeArrayForSpace(space);
-        for (const edge of space.edges) {
-          if (!edge.isExterior) continue;
+        
+        // Get all used types for this space
+        const wallTypes = new Set();
+        const windowTypes = new Set();
+        const doorTypes = new Set();
+        
+        space.edges.forEach(edge => {
+          if (edge.isExterior) {
+            if (edge.wallType) wallTypes.add(edge.wallType);
+            if (edge.windowType) windowTypes.add(edge.windowType);
+            if (edge.hasDoors && edge.doorType) doorTypes.add(edge.doorType);
+          }
+        });
+        
+        // Helper to get type name by ID
+        const getTypeName = (category, typeId) => {
+          if (!typeId) return "";
+          const type = AppState.types[category]?.find(t => t.id === typeId);
+          return type ? type.name : "";
+        };
+        
+        // Calculate ceiling area (handle manual entry and "same as floor")
+        let ceilingArea = 0;
+        if (space.ceilingSameAsFloor) {
+          ceilingArea = space.area || 0;
+        } else if (space.ceilingManualOverride) {
+          ceilingArea = space.ceilingManualArea || 0;
+        } else {
+          ceilingArea = space.ceilingArea || 0;
+        }
+        
+        // Add space header row
+        allRows.push({
+          A: space.name || "Room",
+          B: "", C: "", D: "", E: "", F: "", G: "", H: "", I: ""
+        });
+        
+        // Add Floor Area row
+        allRows.push({
+          A: "Floor Area",
+          B: roundToTenth(feet2ToDisplayArea(space.area || 0)),
+          C: unit + "²",
+          D: "", E: "", F: "", G: "", H: "", I: ""
+        });
+        
+        // Add Ceiling Area row
+        allRows.push({
+          A: "Ceiling Area",
+          B: roundToTenth(feet2ToDisplayArea(ceilingArea)),
+          C: unit + "²",
+          D: "", E: "", F: "", G: "", H: "", I: ""
+        });
+        
+        // Add Avg Ceiling Height row
+        allRows.push({
+          A: "Avg Ceiling Height",
+          B: roundToTenth(feetToDisplayLength(space.ceilingHeight || 0)),
+          C: unit,
+          D: "", E: "", F: "", G: "", H: "", I: ""
+        });
+        
+        // Add Skylight rows
+        if (space.hasSkylight && space.skylightArea > 0 && space.skylightType) {
+          const typeName = getTypeName('skylight', space.skylightType);
+          allRows.push({
+            A: `Skylight Area (${typeName || "Skylight Type 1"})`,
+            B: roundToTenth(feet2ToDisplayArea(space.skylightArea || 0)),
+            C: unit + "²",
+            D: "", E: "", F: "", G: "", H: "", I: ""
+          });
+        } else {
+          // Even if no skylight, add a row with zero (no type name)
+          allRows.push({
+            A: "Skylight Area",
+            B: 0,
+            C: unit + "²",
+            D: "", E: "", F: "", G: "", H: "", I: ""
+          });
+        }
+        
+        // Calculate totals by type AND direction
+        const wallAreaByTypeDir = {}; // key: "typeId|direction"
+        const windowAreaByTypeDir = {};
+        const doorQtyByTypeDir = {};
+        
+        space.edges.forEach(edge => {
+          if (!edge.isExterior) return;
+          
           const wallArea = clampNum(edge.length) * clampNum(edge.height);
           const winArea = clampNum(edge.winArea);
-          const dir = edge.direction || "N";
-          if (wallAreaByDir[dir] != null) wallAreaByDir[dir] += wallArea;
-          if (winAreaByDir[dir] != null) winAreaByDir[dir] += winArea;
+          const direction = edge.direction || 'N';
+          
+          // Wall area by type + direction
+          const wType = edge.wallType || 'default';
+          const wKey = `${wType}|${direction}`;
+          wallAreaByTypeDir[wKey] = (wallAreaByTypeDir[wKey] || 0) + wallArea;
+          
+          // Window area by type + direction
+          if (winArea > 0) {
+            const winType = edge.windowType || 'default';
+            const winKey = `${winType}|${direction}`;
+            windowAreaByTypeDir[winKey] = (windowAreaByTypeDir[winKey] || 0) + winArea;
+          }
+          
+          // Door quantity by type + direction
+          if (edge.hasDoors && (edge.doorQty || 0) > 0) {
+            const dType = edge.doorType || 'default';
+            const dKey = `${dType}|${direction}`;
+            doorQtyByTypeDir[dKey] = (doorQtyByTypeDir[dKey] || 0) + (edge.doorQty || 0);
+          }
+        });
+        
+        // Add single direction header row for all types
+        allRows.push({
+          A: "",
+          B: "N",
+          C: "S",
+          D: "E",
+          E: "W",
+          F: "NE",
+          G: "NW",
+          H: "SE",
+          I: "SW"
+        });
+        
+        // Group wall areas by type, with columns for each direction
+        const wallTypeIds = new Set();
+        Object.keys(wallAreaByTypeDir).forEach(key => {
+          const [typeId] = key.split('|');
+          wallTypeIds.add(typeId);
+        });
+        
+        if (wallTypeIds.size > 0) {
+          wallTypeIds.forEach(typeId => {
+            const typeName = getTypeName('wall', typeId);
+            const row = {
+              B: 0, C: 0, D: 0, E: 0, F: 0, G: 0, H: 0, I: 0, J: unit + "²"
+            };
+            
+            // Fill in values for each direction
+            const directions = ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW'];
+            const columns = ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
+            let hasNonZero = false;
+            
+            directions.forEach((dir, idx) => {
+              const key = `${typeId}|${dir}`;
+              if (wallAreaByTypeDir[key]) {
+                const area = roundToTenth(feet2ToDisplayArea(wallAreaByTypeDir[key]));
+                row[columns[idx]] = area;
+                if (area > 0) hasNonZero = true;
+              }
+            });
+            
+            // Only show type name if row has non-zero values
+            row.A = hasNonZero ? `Wall Area (${typeName || "Wall Type 1"})` : "Wall Area";
+            
+            allRows.push(row);
+          });
+        } else {
+          allRows.push({
+            A: "Wall Area",
+            B: 0, C: 0, D: 0, E: 0, F: 0, G: 0, H: 0, I: 0, J: unit + "²"
+          });
         }
-
-        return {
-          "Room Name": space.name || "",
-          [`Average Ceiling Height (${unit})`]: roundToTenth(feetToDisplayLength(space.ceilingHeight || 0)),
-          [`Exterior Perimeter Length (${unit})`]: roundToTenth(feetToDisplayLength(space.exteriorPerimeter || 0)),
-          [`Floor Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(space.area || 0)),
-
-          [`N Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["N"])) ,
-          [`NW Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["NW"])) ,
-          [`NE Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["NE"])) ,
-          [`S Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["S"])) ,
-          [`SW Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["SW"])) ,
-          [`SE Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["SE"])) ,
-          [`E Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["E"])) ,
-          [`W Wall Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(wallAreaByDir["W"])) ,
-
-          [`N Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["N"])) ,
-          [`NW Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["NW"])) ,
-          [`NE Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["NE"])) ,
-          [`S Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["S"])) ,
-          [`SW Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["SW"])) ,
-          [`SE Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["SE"])) ,
-          [`E Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["E"])) ,
-          [`W Window Area (${unit}²)`]: roundToTenth(feet2ToDisplayArea(winAreaByDir["W"])) ,
-
-          "_units_note": unit
-        };
+        
+        // Group window areas by type, with columns for each direction
+        const windowTypeIds = new Set();
+        Object.keys(windowAreaByTypeDir).forEach(key => {
+          const [typeId] = key.split('|');
+          windowTypeIds.add(typeId);
+        });
+        
+        if (windowTypeIds.size > 0) {
+          windowTypeIds.forEach(typeId => {
+            const typeName = getTypeName('window', typeId);
+            const row = {
+              B: 0, C: 0, D: 0, E: 0, F: 0, G: 0, H: 0, I: 0, J: unit + "²"
+            };
+            
+            // Fill in values for each direction
+            const directions = ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW'];
+            const columns = ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
+            let hasNonZero = false;
+            
+            directions.forEach((dir, idx) => {
+              const key = `${typeId}|${dir}`;
+              if (windowAreaByTypeDir[key]) {
+                const area = roundToTenth(feet2ToDisplayArea(windowAreaByTypeDir[key]));
+                row[columns[idx]] = area;
+                if (area > 0) hasNonZero = true;
+              }
+            });
+            
+            // Only show type name if row has non-zero values
+            row.A = hasNonZero ? `Window Area (${typeName || "Window Type 1"})` : "Window Area";
+            
+            allRows.push(row);
+          });
+        } else {
+          allRows.push({
+            A: "Window Area",
+            B: 0, C: 0, D: 0, E: 0, F: 0, G: 0, H: 0, I: 0, J: unit + "²"
+          });
+        }
+        
+        // Group door quantities by type, with columns for each direction
+        const doorTypeIds = new Set();
+        Object.keys(doorQtyByTypeDir).forEach(key => {
+          const [typeId] = key.split('|');
+          doorTypeIds.add(typeId);
+        });
+        
+        if (doorTypeIds.size > 0) {
+          doorTypeIds.forEach(typeId => {
+            const typeName = getTypeName('door', typeId);
+            const row = {
+              B: 0, C: 0, D: 0, E: 0, F: 0, G: 0, H: 0, I: 0, J: "Qty"
+            };
+            
+            // Fill in values for each direction
+            const directions = ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW'];
+            const columns = ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
+            let hasNonZero = false;
+            
+            directions.forEach((dir, idx) => {
+              const key = `${typeId}|${dir}`;
+              if (doorQtyByTypeDir[key]) {
+                const qty = doorQtyByTypeDir[key];
+                row[columns[idx]] = qty;
+                if (qty > 0) hasNonZero = true;
+              }
+            });
+            
+            // Only show type name if row has non-zero values
+            row.A = hasNonZero ? `Doors (${typeName || "Door Type 1"})` : "Doors";
+            
+            allRows.push(row);
+          });
+        } else {
+          allRows.push({
+            A: "Doors",
+            B: 0, C: 0, D: 0, E: 0, F: 0, G: 0, H: 0, I: 0, J: "Qty"
+          });
+        }
+        
+        // Add blank row between spaces
+        allRows.push({
+          A: "", B: "", C: "", D: "", E: "", F: "", G: "", H: "", I: "", J: ""
+        });
       });
-
-      // Define column order
-      const header = Object.keys(rows[0] || {});
-
-      const ws = XLSX.utils.json_to_sheet(rows, { header });
-      // Add units in header row 1 (optional)
-      // Freeze header
-      ws["!freeze"] = { xSplit: 0, ySplit: 1 };
-
+      
+      // Create worksheet from rows
+      const ws = XLSX.utils.json_to_sheet(allRows, {
+        header: ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
+        skipHeader: true
+      });
+      
+      // Set column widths
+      ws['!cols'] = [
+        { wch: 25 },  // Column A
+        { wch: 12 },  // Column B
+        { wch: 8 },   // Column C
+        { wch: 8 },   // Column D
+        { wch: 8 },   // Column E
+        { wch: 8 },   // Column F
+        { wch: 8 },   // Column G
+        { wch: 8 },   // Column H
+        { wch: 8 },   // Column I
+        { wch: 8 }    // Column J
+      ];
+      
+      // Add sheet with floor name
       XLSX.utils.book_append_sheet(wb, ws, floor.name.substring(0, 31) || "Floor");
     });
 
-    XLSX.writeFile(wb, "Floorplan_Export.xlsx");
+    // Generate filename: "Project Name - Area Takeoffs - Timestamp.xlsx"
+    const projectName = AppState.projectName && AppState.projectName.trim() ? AppState.projectName.trim() : "Project";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5); // Format: YYYY-MM-DDTHH-MM-SS
+    const filename = `${projectName} - Area Takeoffs - ${timestamp}.xlsx`;
+    
+    XLSX.writeFile(wb, filename);
   }
 
   // --------------------------
