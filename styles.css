@@ -364,6 +364,65 @@ button.active {
   padding: 0; /* no built-in padding */
 }
 
+/* Zoom controls */
+.zoom-controls {
+  position: fixed;
+  bottom: 70px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  z-index: 50;
+}
+
+.zoom-btn {
+  padding: 4px 12px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+  min-width: 32px;
+  transition: all 0.15s ease;
+}
+
+.zoom-btn:hover {
+  background: rgba(255,255,255,0.05);
+  border-color: var(--primary);
+}
+
+.zoom-btn-reset {
+  padding: 4px 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.15s ease;
+}
+
+.zoom-btn-reset:hover {
+  background: rgba(255,255,255,0.05);
+  border-color: var(--primary);
+}
+
+.zoom-display {
+  font-size: 13px;
+  color: var(--text);
+  font-weight: 600;
+  min-width: 45px;
+  text-align: center;
+}
+
 /* Overlay panel system */
 .overlay-panel {
   position: fixed;

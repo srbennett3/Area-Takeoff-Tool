@@ -253,6 +253,12 @@
 
   let isInsertingVertex = false; // insert vertex mode
   
+  // Zoom state (not persisted - always starts at 100%)
+  let currentZoom = 1.0;
+  const ZOOM_LEVELS = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0];
+  const MIN_ZOOM = 0.25;
+  const MAX_ZOOM = 4.0;
+  
   let isDrawingCeiling = false; // ceiling drawing mode
   let tempCeilingPoints = []; // for ceiling polygon drawing
   let tempCeilingCircles = [];
@@ -387,7 +393,159 @@
     const pixelLen = clampNum(floor.scale.pixelLen);
     const realLenFeet = clampNum(floor.scale.realLenFeet);
     if (pixelLen <= 0 || realLenFeet <= 0) return 0;
-    return realLenFeet / pixelLen; // feet per pixel
+    return realLenFeet / pixelLen; // feet per canvas pixel (zoom-independent)
+  }
+
+  // Helper functions to get zoom-adjusted visual constants
+  function getZoomAdjustedEdgeOverlayThickness() {
+    return EDGE_OVERLAY_THICKNESS_PX / currentZoom;
+  }
+  function getZoomAdjustedEdgeHighlightThickness() {
+    return EDGE_HIGHLIGHT_THICKNESS_PX / currentZoom;
+  }
+  function getZoomAdjustedVertexHandleSize() {
+    return VERTEX_HANDLE_SIZE_PX / currentZoom;
+  }
+  function getZoomAdjustedEdgeHitBuffer() {
+    return EDGE_HIT_BUFFER_PX / currentZoom;
+  }
+  function getZoomAdjustedVertexDragRadius() {
+    return VERTEX_DRAG_RADIUS_PX / currentZoom;
+  }
+  function getZoomAdjustedCloseThreshold() {
+    return SPACE_CLOSE_THRESHOLD_PX / currentZoom;
+  }
+  function getZoomAdjustedScaleLineWidth() {
+    return SCALE_LINE_WIDTH / currentZoom;
+  }
+  function getZoomAdjustedTempEdgeThickness() {
+    return TEMP_EDGE_THICKNESS_PX / currentZoom;
+  }
+
+  // Main zoom function
+  function setZoom(newZoom) {
+    // Clamp zoom to limits
+    newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom));
+    if (newZoom === currentZoom) return;
+    
+    // Calculate viewport center before zoom
+    const holder = dom.canvasHolder;
+    const centerX = holder.scrollLeft + holder.clientWidth / 2;
+    const centerY = holder.scrollTop + holder.clientHeight / 2;
+    
+    // Store old zoom
+    const oldZoom = currentZoom;
+    
+    // Update zoom state
+    currentZoom = newZoom;
+    
+    // Update canvas dimensions to match zoom (this makes the scrollable area expand/contract)
+    const newWidth = DEFAULT_CANVAS_WIDTH * currentZoom;
+    const newHeight = DEFAULT_CANVAS_HEIGHT * currentZoom;
+    canvas.setDimensions({ width: newWidth, height: newHeight });
+    
+    // Apply zoom to canvas
+    canvas.setZoom(currentZoom);
+    
+    // Update all polygon corner sizes
+    canvas.getObjects().forEach(obj => {
+      if (obj.get("fpType") === "space" || obj.get("fpType") === "ceiling") {
+        obj.set("cornerSize", getZoomAdjustedVertexHandleSize());
+        obj.set("touchCornerSize", Math.max(getZoomAdjustedVertexHandleSize(), 24 / currentZoom));
+        obj.setCoords();
+      }
+    });
+    
+    // Refresh all edge overlays for all spaces
+    const floor = activeFloor();
+    if (floor && Array.isArray(floor.spaces)) {
+      floor.spaces.forEach(space => {
+        updateEdgeOverlaysForSpace(space.id);
+      });
+    }
+    
+    // Update selected edge highlight if exists
+    if (selectedEdgeIndex != null && selectedSpaceId) {
+      const poly = spaceIdToPolygon.get(selectedSpaceId);
+      if (poly) {
+        const absPts = getPolygonAbsolutePoints(poly);
+        highlightSelectedEdge(absPts, selectedEdgeIndex);
+      }
+    }
+    
+    // Update selected vertex highlight if exists
+    if (selectedVertexIndex != null && selectedSpaceId) {
+      const poly = spaceIdToPolygon.get(selectedSpaceId);
+      if (poly) {
+        const absPts = getPolygonAbsolutePoints(poly);
+        if (absPts[selectedVertexIndex]) {
+          drawVertexHighlightAt(absPts[selectedVertexIndex]);
+        }
+      }
+    }
+    
+    // Update selected ceiling vertex highlight if exists
+    if (selectedCeilingVertexIndex != null && selectedSpaceId) {
+      const ceiling = spaceIdToCeiling.get(selectedSpaceId);
+      if (ceiling) {
+        const absPts = getPolygonAbsolutePoints(ceiling);
+        if (absPts[selectedCeilingVertexIndex]) {
+          drawCeilingVertexHighlightAt(absPts[selectedCeilingVertexIndex]);
+        }
+      }
+    }
+    
+    // Redraw scale line if visible
+    if (floor?.scale?.line && floor.scale.visible !== false) {
+      removeScaleVisuals();
+      drawScaleLineForFloor(floor);
+    }
+    
+    // Recalculate measurements with new scale factor
+    if (floor) {
+      recalcAllSpacesForFloor(floor);
+    }
+    
+    // Adjust scroll position to keep center point stable
+    const zoomRatio = newZoom / oldZoom;
+    holder.scrollLeft = centerX * zoomRatio - holder.clientWidth / 2;
+    holder.scrollTop = centerY * zoomRatio - holder.clientHeight / 2;
+    
+    // Update zoom display
+    updateZoomDisplay();
+    
+    canvas.renderAll();
+  }
+
+  function updateZoomDisplay() {
+    const zoomDisplay = document.getElementById("zoomDisplay");
+    if (zoomDisplay) {
+      zoomDisplay.textContent = Math.round(currentZoom * 100) + "%";
+    }
+  }
+
+  function zoomIn() {
+    // Find next higher zoom level
+    const nextLevel = ZOOM_LEVELS.find(level => level > currentZoom);
+    if (nextLevel) {
+      setZoom(nextLevel);
+    } else {
+      setZoom(MAX_ZOOM);
+    }
+  }
+
+  function zoomOut() {
+    // Find next lower zoom level
+    const prevLevel = [...ZOOM_LEVELS].reverse().find(level => level < currentZoom);
+    if (prevLevel) {
+      setZoom(prevLevel);
+    } else {
+      setZoom(MIN_ZOOM);
+    }
+  }
+
+  function zoomReset() {
+    setZoom(1.0);
   }
 
   function setScaleInputsFromFloor(floor) {
@@ -491,7 +649,7 @@
       originX: "center",
       originY: "center",
       width: len,
-      height: SCALE_LINE_WIDTH,
+      height: getZoomAdjustedScaleLineWidth(),
       angle: angleDeg,
       fill: COLOR_SCALE,
       stroke: null,
@@ -613,7 +771,7 @@
         originX: "center",
         originY: "center",
         width: len,
-        height: EDGE_OVERLAY_THICKNESS_PX,
+        height: getZoomAdjustedEdgeOverlayThickness(),
         angle: angleDeg,
         fill: baseColor,
         stroke: null,
@@ -649,8 +807,8 @@
       polygon.cornerColor = "#93c5fd"; // blue-300 (default for space polygons)
     }
     polygon.cornerStyle = "circle";
-    polygon.cornerSize = VERTEX_HANDLE_SIZE_PX;
-    polygon.touchCornerSize = Math.max(VERTEX_HANDLE_SIZE_PX, 24);
+    polygon.cornerSize = getZoomAdjustedVertexHandleSize();
+    polygon.touchCornerSize = Math.max(getZoomAdjustedVertexHandleSize(), 24 / currentZoom);
     polygon.transparentCorners = false;
 
     const lastControl = polygon.points.length - 1;
@@ -1232,7 +1390,7 @@
       if (tempCeilingPoints.length > 0) {
         const first = tempCeilingPoints[0];
         const dToFirst = distance(pointer, first);
-        if (dToFirst <= SPACE_CLOSE_THRESHOLD_PX) {
+        if (dToFirst <= getZoomAdjustedCloseThreshold()) {
           suppressDeselectUntilMouseUp = true;
           if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
           endDrawCeiling();
@@ -1241,7 +1399,7 @@
       }
       // Add point + temp visuals (purple for ceiling)
       const circ = new fabric.Circle({
-        radius: 3,
+        radius: 3 / currentZoom,
         fill: COLOR_CEILING_STROKE,
         left: pointer.x,
         top: pointer.y,
@@ -1267,7 +1425,7 @@
           originX: "center",
           originY: "center",
           width: len,
-          height: TEMP_EDGE_THICKNESS_PX,
+          height: getZoomAdjustedTempEdgeThickness(),
           angle: angleDeg,
           fill: COLOR_CEILING_STROKE,
           stroke: null,
@@ -1288,7 +1446,7 @@
       if (tempDrawPoints.length > 0) {
         const first = tempDrawPoints[0];
         const dToFirst = distance(pointer, first);
-        if (dToFirst <= SPACE_CLOSE_THRESHOLD_PX) {
+        if (dToFirst <= getZoomAdjustedCloseThreshold()) {
           // Prevent the background mouse:down handler from clearing selection in this cycle
           suppressDeselectUntilMouseUp = true;
           if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
@@ -1298,7 +1456,7 @@
       }
       // Add point + temp visuals
       const circ = new fabric.Circle({
-        radius: 3,
+        radius: 3 / currentZoom,
         fill: "#93c5fd",
         left: pointer.x, // center at cursor
         top: pointer.y,  // center at cursor
@@ -1324,7 +1482,7 @@
           originX: "center",
           originY: "center",
           width: len,
-          height: TEMP_EDGE_THICKNESS_PX,
+          height: getZoomAdjustedTempEdgeThickness(),
           angle: angleDeg,
           fill: "#60a5fa",
           stroke: null,
@@ -1343,7 +1501,7 @@
     if (isDrawingScale) {
       // Draw temporary scale vertices in red, centered
       const tempVtx = new fabric.Circle({
-        radius: SCALE_VERTEX_RADIUS_PX,
+        radius: SCALE_VERTEX_RADIUS_PX / currentZoom,
         fill: COLOR_SCALE,
         left: pointer.x,
         top: pointer.y,
@@ -1402,7 +1560,7 @@
         const ceiling = spaceIdToCeiling.get(selectedSpaceId);
         if (ceiling && ceiling.visible && space && !space.ceilingSameAsFloor) {
           const ceilingPts = getPolygonAbsolutePoints(ceiling);
-          const ceilingIdx = findClosestEdgeIndex(ceilingPts, pointer, EDGE_HIT_BUFFER_PX);
+          const ceilingIdx = findClosestEdgeIndex(ceilingPts, pointer, getZoomAdjustedEdgeHitBuffer());
           if (ceilingIdx !== null) {
             insertVertexAtCeilingEdge(selectedSpaceId, ceilingIdx, pointer);
         isInsertingVertex = false;
@@ -1435,7 +1593,7 @@
       if (ceiling && ceiling.visible) {
         const ceilingPts = getPolygonAbsolutePoints(ceiling);
         const pointerForVertex = canvas.getPointer(opt.e, false);
-        const ceilingVIdx = findClosestVertexIndex(ceilingPts, pointerForVertex, VERTEX_DRAG_RADIUS_PX);
+        const ceilingVIdx = findClosestVertexIndex(ceilingPts, pointerForVertex, getZoomAdjustedVertexDragRadius());
         if (ceilingVIdx != null) {
           // Selecting a ceiling vertex clears edge selection and space vertex selection
           selectedEdgeIndex = null;
@@ -1452,7 +1610,7 @@
         // Vertex selection: click near a space vertex toggles selected vertex
         const absPtsPre = getPolygonAbsolutePoints(poly);
         const pointerForVertex = canvas.getPointer(opt.e, false);
-        const vIdx = findClosestVertexIndex(absPtsPre, pointerForVertex, VERTEX_DRAG_RADIUS_PX);
+        const vIdx = findClosestVertexIndex(absPtsPre, pointerForVertex, getZoomAdjustedVertexDragRadius());
         if (vIdx != null) {
           // Selecting a vertex clears edge selection and ceiling vertex selection
           selectedEdgeIndex = null;
@@ -1482,8 +1640,8 @@
       }
         const absPts = absPtsPre;
         // Avoid edge selection when near a vertex control
-        const nearVertex = absPts.some(p => distance(pointer, p) <= Math.max(4, EDGE_HIT_BUFFER_PX * 0.6));
-        let idx = nearVertex ? null : findClosestEdgeIndex(absPts, pointer, EDGE_HIT_BUFFER_PX);
+        const nearVertex = absPts.some(p => distance(pointer, p) <= Math.max(4 / currentZoom, getZoomAdjustedEdgeHitBuffer() * 0.6));
+        let idx = nearVertex ? null : findClosestEdgeIndex(absPts, pointer, getZoomAdjustedEdgeHitBuffer());
         if (idx === null && hoverEdgeIndex != null) {
           // Use the last hover edge if the click hit-test missed (e.g., jitter or canvas rounding)
           idx = hoverEdgeIndex;
@@ -1540,7 +1698,7 @@
           const poly = spaceIdToPolygon.get(selectedSpaceId);
           if (poly) {
             const absPts = getPolygonAbsolutePoints(poly);
-            const idx = findClosestEdgeIndex(absPts, pointer, EDGE_HIT_BUFFER_PX);
+            const idx = findClosestEdgeIndex(absPts, pointer, getZoomAdjustedEdgeHitBuffer());
             const pointerVisible = (canvas.defaultCursor === "pointer") || (canvas.upperCanvasEl && canvas.upperCanvasEl.style && canvas.upperCanvasEl.style.cursor === "pointer");
             if (idx !== null || hoverEdgeIndex != null || pointerVisible) {
               // do not clear selection when near an edge
@@ -1683,6 +1841,7 @@
     const cx = (a.x + b.x) / 2;
     const cy = (a.y + b.y) / 2;
     const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+    const thickness = getZoomAdjustedEdgeHighlightThickness();
     // Use a filled rotated rectangle so coverage is symmetric and fully occludes the underlying stroke
     highlightedEdgeVisual = new fabric.Rect({
       left: cx,
@@ -1690,9 +1849,9 @@
       originX: "center",
       originY: "center",
       width: len,
-      height: EDGE_HIGHLIGHT_THICKNESS_PX,
-      rx: Math.min(EDGE_HIGHLIGHT_THICKNESS_PX / 2, 4),
-      ry: Math.min(EDGE_HIGHLIGHT_THICKNESS_PX / 2, 4),
+      height: thickness,
+      rx: Math.min(thickness / 2, 4 / currentZoom),
+      ry: Math.min(thickness / 2, 4 / currentZoom),
       angle: angleDeg,
       fill: COLOR_EDGE_SELECTED,
       stroke: null,
@@ -1728,11 +1887,12 @@
 
   function drawVertexHighlightAt(point) {
     clearVertexHighlight();
+    const baseRadius = Math.max(6, VERTEX_HANDLE_SIZE_PX * 0.6);
     selectedVertexVisual = new fabric.Circle({
-      radius: Math.max(6, VERTEX_HANDLE_SIZE_PX * 0.6),
+      radius: baseRadius / currentZoom,
       fill: COLOR_VERTEX_SELECTED_FILL,
       stroke: COLOR_VERTEX_SELECTED_STROKE,
-      strokeWidth: 2,
+      strokeWidth: 2 / currentZoom,
       left: point.x,
       top: point.y,
       originX: "center",
@@ -1792,11 +1952,12 @@
   
   function drawCeilingVertexHighlightAt(point) {
     clearCeilingVertexHighlight();
+    const baseRadius = Math.max(6, VERTEX_HANDLE_SIZE_PX * 0.6);
     selectedCeilingVertexVisual = new fabric.Circle({
-      radius: Math.max(6, VERTEX_HANDLE_SIZE_PX * 0.6),
+      radius: baseRadius / currentZoom,
       fill: COLOR_VERTEX_SELECTED_FILL,
       stroke: COLOR_VERTEX_SELECTED_STROKE,
-      strokeWidth: 2,
+      strokeWidth: 2 / currentZoom,
       left: point.x,
       top: point.y,
       originX: "center",
@@ -3886,11 +4047,11 @@
     
     if (ceiling && ceiling.visible && space && !space.ceilingSameAsFloor) {
       ceilingAbsPts = getPolygonAbsolutePoints(ceiling);
-      nearCeilingVertex = ceilingAbsPts.some(p => distance(pointer, p) <= VERTEX_DRAG_RADIUS_PX);
-      ceilingEdgeIdx = findClosestEdgeIndex(ceilingAbsPts, pointer, EDGE_HIT_BUFFER_PX);
+      nearCeilingVertex = ceilingAbsPts.some(p => distance(pointer, p) <= getZoomAdjustedVertexDragRadius());
+      ceilingEdgeIdx = findClosestEdgeIndex(ceilingAbsPts, pointer, getZoomAdjustedEdgeHitBuffer());
     }
     
-    const nearVertex = absPts.some(p => distance(pointer, p) <= VERTEX_DRAG_RADIUS_PX);
+    const nearVertex = absPts.some(p => distance(pointer, p) <= getZoomAdjustedVertexDragRadius());
     // Keep edge overlays perfectly aligned during hover/move
     updateEdgeOverlaysForSpace(selectedSpaceId);
     
@@ -3904,7 +4065,7 @@
     }
     
     if (nearVertex && !isInsertingVertex) { hoverEdgeIndex = null; canDragSelectedSpace = false; canvas.defaultCursor = "default"; return; }
-    const idx = findClosestEdgeIndex(absPts, pointer, EDGE_HIT_BUFFER_PX);
+    const idx = findClosestEdgeIndex(absPts, pointer, getZoomAdjustedEdgeHitBuffer());
     hoverEdgeIndex = (idx !== null) ? idx : null;
     // Keep selected vertex highlight in sync (space and ceiling)
     if (selectedVertexIndex != null && Array.isArray(absPts) && absPts[selectedVertexIndex]) {
@@ -4181,6 +4342,60 @@
   }
 
   // --------------------------
+  // Zoom controls event handlers
+  // --------------------------
+  const btnZoomIn = document.getElementById("btnZoomIn");
+  const btnZoomOut = document.getElementById("btnZoomOut");
+  const btnZoomReset = document.getElementById("btnZoomReset");
+
+  if (btnZoomIn) {
+    btnZoomIn.addEventListener("click", () => {
+      zoomIn();
+    });
+  }
+
+  if (btnZoomOut) {
+    btnZoomOut.addEventListener("click", () => {
+      zoomOut();
+    });
+  }
+
+  if (btnZoomReset) {
+    btnZoomReset.addEventListener("click", () => {
+      zoomReset();
+    });
+  }
+
+  // Keyboard shortcuts for zoom (Ctrl/Cmd + Plus/Minus/0)
+  document.addEventListener("keydown", (e) => {
+    // Avoid intercepting typing in inputs/selects/textarea
+    const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+    const isTyping = tag === 'input' || tag === 'textarea' || tag === 'select';
+    if (isTyping) return;
+
+    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    const modKey = isMac ? e.metaKey : e.ctrlKey;
+
+    if (modKey) {
+      // Zoom in: Ctrl/Cmd + Plus or Ctrl/Cmd + =
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        zoomIn();
+      }
+      // Zoom out: Ctrl/Cmd + Minus
+      else if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        zoomOut();
+      }
+      // Reset zoom: Ctrl/Cmd + 0
+      else if (e.key === '0') {
+        e.preventDefault();
+        zoomReset();
+      }
+    }
+  });
+
+  // --------------------------
   // Initialization
   // --------------------------
   function init() {
@@ -4245,6 +4460,9 @@
         else if (e.key === 'ArrowDown') { dom.canvasHolder.scrollTop += PAN_STEP; }
       });
     }
+    
+    // Initialize zoom display
+    updateZoomDisplay();
   }
 
   init();
