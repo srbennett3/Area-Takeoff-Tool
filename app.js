@@ -38,8 +38,8 @@
   const COLOR_CEILING = "rgba(168, 85, 247, 0.18)"; // purple for ceiling
   const COLOR_CEILING_STROKE = "#a855f7"; // purple stroke
   const COLOR_CEILING_SELECTED = "rgba(168, 85, 247, 0.25)"; // selected ceiling
-  // Configurable edge hover/selection buffer (in pixels in canvas space)
-  const EDGE_HIT_BUFFER_PX = 6;
+// Configurable edge hover/selection buffer (in pixels in canvas space)
+const EDGE_HIT_BUFFER_PX = 6;
   // Configurable vertex drag/hover radius and handle size
   const VERTEX_DRAG_RADIUS_PX = 12;
   const VERTEX_HANDLE_SIZE_PX = 10;
@@ -401,10 +401,10 @@
     return EDGE_OVERLAY_THICKNESS_PX / currentZoom;
   }
   function getZoomAdjustedEdgeHighlightThickness() {
-    return EDGE_HIGHLIGHT_THICKNESS_PX / currentZoom;
+    return EDGE_HIGHLIGHT_THICKNESS_PX / currentZoom; // Compensate for Fabric's zoom scaling
   }
   function getZoomAdjustedVertexHandleSize() {
-    return VERTEX_HANDLE_SIZE_PX / currentZoom;
+    return VERTEX_HANDLE_SIZE_PX; // Keep constant size for controls
   }
   function getZoomAdjustedEdgeHitBuffer() {
     return EDGE_HIT_BUFFER_PX / currentZoom;
@@ -451,7 +451,7 @@
     canvas.getObjects().forEach(obj => {
       if (obj.get("fpType") === "space" || obj.get("fpType") === "ceiling") {
         obj.set("cornerSize", getZoomAdjustedVertexHandleSize());
-        obj.set("touchCornerSize", Math.max(getZoomAdjustedVertexHandleSize(), 24 / currentZoom));
+        obj.set("touchCornerSize", Math.max(getZoomAdjustedVertexHandleSize(), 24));
         obj.setCoords();
       }
     });
@@ -808,7 +808,7 @@
     }
     polygon.cornerStyle = "circle";
     polygon.cornerSize = getZoomAdjustedVertexHandleSize();
-    polygon.touchCornerSize = Math.max(getZoomAdjustedVertexHandleSize(), 24 / currentZoom);
+    polygon.touchCornerSize = Math.max(getZoomAdjustedVertexHandleSize(), 24);
     polygon.transparentCorners = false;
 
     const lastControl = polygon.points.length - 1;
@@ -851,18 +851,22 @@
     const polygon = transform.target;
     const currentControl = polygon.controls[polygon.__corner];
     const canvas = polygon.canvas;
-    const vpt = canvas && canvas.viewportTransform ? canvas.viewportTransform : fabric.iMatrix;
-    const invVpt = fabric.util.invertTransform(vpt);
-    // Pointer in canvas coords
-    const pointerCanvas = fabric.util.transformPoint(new fabric.Point(x, y), invVpt);
-    // Convert pointer to polygon local space (before pathOffset subtraction)
-    const invMat = fabric.util.invertTransform(polygon.calcTransformMatrix());
-    const pointerLocal = fabric.util.transformPoint(pointerCanvas, invMat);
-    const finalPoint = {
-      x: pointerLocal.x + polygon.pathOffset.x,
-      y: pointerLocal.y + polygon.pathOffset.y,
+    
+    // Get the actual pointer position from the event
+    const pointer = canvas.getPointer(eventData.e);
+    
+    // Get the polygon's transform matrix
+    const transformMatrix = polygon.calcTransformMatrix();
+    const inverseTransform = fabric.util.invertTransform(transformMatrix);
+    
+    // Transform from canvas coordinates to polygon local coordinates
+    const localPoint = fabric.util.transformPoint(pointer, inverseTransform);
+    
+    // Add pathOffset to get the stored point coordinate
+    polygon.points[currentControl.pointIndex] = {
+      x: localPoint.x + polygon.pathOffset.x,
+      y: localPoint.y + polygon.pathOffset.y,
     };
-    polygon.points[currentControl.pointIndex] = finalPoint;
     // Deselect any selected edge while dragging a vertex
     if (selectedEdgeIndex != null) {
       selectedEdgeIndex = null;
@@ -1635,6 +1639,33 @@
         canvas.setActiveObject(poly);
         updateEdgePanelFromSelection();
         setStatus(`Edge ${selectedEdgeIndex + 1} selected.`);
+        
+        // Auto-open properties tab when edge is selected
+        window._isEdgeSelection = true;
+        showTab('tab-properties', true); // Force open to prevent toggle behavior
+        
+        // Auto-scroll to edge properties when edge is selected
+        setTimeout(() => {
+          const propertiesPanel = document.getElementById('overlay-properties');
+          const edgePanel = document.getElementById('panel-edge');
+          if (propertiesPanel && edgePanel && edgePanel.style.display !== 'none' && propertiesPanel.classList.contains('visible')) {
+            // Force a reflow to ensure the edge panel is positioned correctly
+            edgePanel.offsetHeight;
+            
+            // Get the position of the edge panel relative to the properties panel
+            const edgeRect = edgePanel.getBoundingClientRect();
+            const panelRect = propertiesPanel.getBoundingClientRect();
+            const relativeTop = edgeRect.top - panelRect.top + propertiesPanel.scrollTop;
+            
+            // Scroll to the edge panel with some padding
+            const scrollTop = Math.max(0, relativeTop - 20);
+            propertiesPanel.scrollTo({
+              top: scrollTop,
+              behavior: 'smooth'
+            });
+          }
+        }, 500);
+        
         if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
         return;
       }
@@ -1666,6 +1697,35 @@
           canvas.setActiveObject(poly);
           updateEdgePanelFromSelection();
           setStatus(`Edge ${idx + 1} selected.`);
+          
+          // Auto-open properties tab when edge is selected
+          // Use a flag to prevent selection event from interfering
+          window._isEdgeSelection = true;
+          showTab('tab-properties', true); // Force open to prevent toggle behavior
+          
+          // Auto-scroll to edge properties when edge is selected
+          // Use a longer delay to ensure updateEdgePanelFromSelection has completed
+          setTimeout(() => {
+            const propertiesPanel = document.getElementById('overlay-properties');
+            const edgePanel = document.getElementById('panel-edge');
+            if (propertiesPanel && edgePanel && edgePanel.style.display !== 'none' && propertiesPanel.classList.contains('visible')) {
+              // Force a reflow to ensure the edge panel is positioned correctly
+              edgePanel.offsetHeight;
+              
+              // Get the position of the edge panel relative to the properties panel
+              const edgeRect = edgePanel.getBoundingClientRect();
+              const panelRect = propertiesPanel.getBoundingClientRect();
+              const relativeTop = edgeRect.top - panelRect.top + propertiesPanel.scrollTop;
+              
+              // Scroll to the edge panel with some padding
+              const scrollTop = Math.max(0, relativeTop - 20);
+              propertiesPanel.scrollTo({
+                top: scrollTop,
+                behavior: 'smooth'
+              });
+            }
+          }, 500); // Even longer delay to ensure everything is rendered
+          
           canvas.defaultCursor = "pointer";
           if (opt && opt.e) { try { opt.e.preventDefault(); opt.e.stopPropagation(); } catch(_){} }
           return;
@@ -1723,8 +1783,19 @@
   function onCanvasSelectionCreated(e) {
     const target = e.selected?.[0];
     if (!target) return;
+    
+    // Skip if this is an edge selection to prevent interference
+    if (window._isEdgeSelection) {
+      window._isEdgeSelection = false;
+      return;
+    }
+    
     if (target.get("fpType") === "space") {
       selectSpaceByPolygon(target);
+      // Ensure properties tab opens immediately when space is selected
+      setTimeout(() => {
+        showTab('tab-properties', true); // Force open to prevent toggle behavior
+      }, 10);
       if (dom.btnDeleteSpace) {
         const show = canvas.getActiveObjects().length === 1;
         dom.btnDeleteSpace.style.display = show ? '' : 'none';
@@ -1764,6 +1835,11 @@
     clearSelectedCeilingVertex();
     hoverEdgeIndex = null;
     clearEdgeHighlight();
+    
+    // Close properties tab when space is deselected
+    if (activeTab === 'tab-properties') {
+      hideAllTabs();
+    }
     // Hide all ceilings when no space is selected and disable their controls
     canvas.getObjects().forEach(o => {
       if (o.get("fpType") === "ceiling") {
@@ -2014,7 +2090,7 @@
     selectSpace(sid);
   }
 
-  function selectSpace(spaceId) {
+  function selectSpace(spaceId, autoSwitchTab = true) {
     const changedSpace = selectedSpaceId !== spaceId;
     selectedSpaceId = spaceId;
     lastSelectedSpaceId = spaceId;
@@ -2024,6 +2100,12 @@
       hoverEdgeIndex = null;
       clearSelectedVertex();
       clearSelectedCeilingVertex();
+    }
+    
+    // Auto-open properties tab when space is selected (unless called from spaces tab)
+    // Note: This is also handled in onCanvasSelectionCreated for direct canvas clicks
+    if (spaceId && autoSwitchTab) {
+      showTab('tab-properties', true); // Force open to prevent toggle behavior
     }
     // Update fills and ceiling visibility
     canvas.getObjects().forEach(o => {
@@ -2285,6 +2367,13 @@
     }
     // Update checkbox states from edge data
     if (dom.doorCheckbox) dom.doorCheckbox.checked = !!edge.hasDoors;
+    
+    // Update type dropdowns from edge data
+    if (dom.wallTypeSelect) dom.wallTypeSelect.value = edge.wallType || '';
+    if (dom.windowTypeSelect) dom.windowTypeSelect.value = edge.windowType || '';
+    if (dom.doorTypeSelect) dom.doorTypeSelect.value = edge.doorType || '';
+    if (dom.doorQty) dom.doorQty.value = edge.doorQty || '';
+    
     // Always show wall length row
     if (dom.edgeLengthRow) dom.edgeLengthRow.style.display = '';
     const edgePanel = document.getElementById('panel-edge');
@@ -3724,12 +3813,12 @@
     'tab-scale': 'overlay-scale'
   };
 
-  function showTab(tabId) {
+  function showTab(tabId, forceOpen = false) {
     const overlayId = tabMapping[tabId];
     if (!overlayId) return;
     
-    // Toggle if clicking active tab
-    if (activeTab === tabId) {
+    // Toggle if clicking active tab (unless forceOpen is true)
+    if (activeTab === tabId && !forceOpen) {
       hideAllTabs();
       return;
     }
@@ -3819,9 +3908,12 @@
       
       // Scroll the target element into view within the properties panel
       if (targetElement && propertiesPanel) {
-        propertiesPanel.scrollTop = 0; // Reset scroll first
         const elementTop = targetElement.offsetTop;
-        propertiesPanel.scrollTop = elementTop - 10; // 10px padding from top
+        const scrollTop = Math.max(0, elementTop - 20); // 20px padding from top
+        propertiesPanel.scrollTo({
+          top: scrollTop,
+          behavior: 'smooth'
+        });
       }
     }, 100); // Small delay to ensure tab is fully opened
   }
@@ -3853,7 +3945,7 @@
         const poly = spaceIdToPolygon.get(space.id);
         if (poly) {
           canvas.setActiveObject(poly);
-          selectSpace(space.id);
+          selectSpace(space.id, false); // Don't auto-switch tabs when selecting from spaces list
           canvas.renderAll();
         }
       });

@@ -100,6 +100,62 @@
         <div class="overlay-panel" id="overlay-properties">
           <h3>Properties</h3>
           
+          <!-- Space Properties -->
+          <section class="panel" id="panel-space" style="display:none">
+            <h2>Space Properties</h2>
+            <div class="form-row">
+              <label for="spaceName">Room Name</label>
+              <input id="spaceName" type="text" aria-label="Space room name" disabled />
+            </div>
+            <div class="form-row">
+              <label for="spaceCeiling">Avg Ceiling Height</label>
+              <div class="input-with-unit">
+                <input id="spaceCeiling" type="number" step="0.0001" min="0" aria-label="Average ceiling height" disabled />
+                <span id="spaceCeilingUnit" class="unit-suffix">feet</span>
+              </div>
+            </div>
+            <div class="form-row" id="skylightCheckboxRow">
+              <label for="skylightCheckbox">Has Skylight</label>
+              <input id="skylightCheckbox" type="checkbox" aria-label="Has skylight" disabled />
+            </div>
+            <div class="form-row" id="skylightAreaRow" style="display:none">
+              <label for="skylightArea">Skylight Area</label>
+              <div class="input-with-unit">
+                <input id="skylightArea" type="number" step="0.0001" min="0" aria-label="Skylight area" disabled />
+                <span class="unit-suffix">ft²</span>
+              </div>
+              <label for="skylightTypeSelect">Skylight Type</label>
+              <select id="skylightTypeSelect" aria-label="Skylight type" disabled></select>
+            </div>
+            <div class="form-row" id="ceilingCheckboxRow">
+              <label for="ceilingSameAsFloor">Same Ceiling and Floor Area</label>
+              <input id="ceilingSameAsFloor" type="checkbox" aria-label="Same ceiling and floor area" disabled />
+            </div>
+            <div id="ceilingControlsRow" style="display:none">
+              <div class="row-buttons">
+                <button id="btnDrawCeiling" aria-label="Draw ceiling polygon">Draw Ceiling</button>
+                <button id="btnToggleCeilingVisibility" aria-label="Show or hide ceiling">Hide Ceiling</button>
+                <button id="btnDeleteCeiling" class="danger" aria-label="Delete ceiling" style="display:none">Delete Ceiling</button>
+              </div>
+              <div class="form-row">
+                <label for="ceilingManualEntry">Enter Ceiling Manually</label>
+                <input id="ceilingManualEntry" type="checkbox" aria-label="Enter ceiling area manually" />
+              </div>
+              <div class="form-row" id="ceilingManualInputRow" style="display:none">
+                <label for="ceilingManualArea">Ceiling Area</label>
+                <div class="input-with-unit">
+                  <input id="ceilingManualArea" type="number" step="0.0001" min="0" aria-label="Manual ceiling area" />
+                  <span id="ceilingManualAreaUnit" class="unit-suffix">ft²</span>
+                </div>
+              </div>
+            </div>
+            <div class="readonly-list">
+              <div><span class="label">Ceiling Area:</span> <span id="spaceCeilingArea">-</span></div>
+              <div><span class="label">Floor Area:</span> <span id="spaceArea">-</span></div>
+              <div><span class="label">Exterior Perimeter:</span> <span id="spaceExteriorPerim">-</span></div>
+            </div>
+          </section>
+
           <!-- Edge Properties -->
           <section class="panel" id="panel-edge" style="display:none">
             <h2>Edge (Wall) Properties</h2>
@@ -161,62 +217,6 @@
               <div id="edgeLengthRow"><span class="label">Wall Length:</span> <span id="edgeLength">-</span></div>
               <div id="edgeWallAreaRow"><span class="label">Wall Area:</span> <span id="edgeWallArea">-</span></div>
               <div id="edgeWindowAreaRow"><span class="label">Window Area:</span> <span id="edgeWindowArea">-</span></div>
-            </div>
-          </section>
-
-          <!-- Space Properties -->
-          <section class="panel" id="panel-space" style="display:none">
-            <h2>Space Properties</h2>
-            <div class="form-row">
-              <label for="spaceName">Room Name</label>
-              <input id="spaceName" type="text" aria-label="Space room name" disabled />
-            </div>
-            <div class="form-row">
-              <label for="spaceCeiling">Avg Ceiling Height</label>
-              <div class="input-with-unit">
-                <input id="spaceCeiling" type="number" step="0.0001" min="0" aria-label="Average ceiling height" disabled />
-                <span id="spaceCeilingUnit" class="unit-suffix">feet</span>
-              </div>
-            </div>
-            <div class="form-row" id="skylightCheckboxRow">
-              <label for="skylightCheckbox">Has Skylight</label>
-              <input id="skylightCheckbox" type="checkbox" aria-label="Has skylight" disabled />
-            </div>
-            <div class="form-row" id="skylightAreaRow" style="display:none">
-              <label for="skylightArea">Skylight Area</label>
-              <div class="input-with-unit">
-                <input id="skylightArea" type="number" step="0.0001" min="0" aria-label="Skylight area" disabled />
-                <span class="unit-suffix">ft²</span>
-              </div>
-              <label for="skylightTypeSelect">Skylight Type</label>
-              <select id="skylightTypeSelect" aria-label="Skylight type" disabled></select>
-            </div>
-            <div class="form-row" id="ceilingCheckboxRow">
-              <label for="ceilingSameAsFloor">Same Ceiling and Floor Area</label>
-              <input id="ceilingSameAsFloor" type="checkbox" aria-label="Same ceiling and floor area" disabled />
-            </div>
-            <div id="ceilingControlsRow" style="display:none">
-              <div class="row-buttons">
-                <button id="btnDrawCeiling" aria-label="Draw ceiling polygon">Draw Ceiling</button>
-                <button id="btnToggleCeilingVisibility" aria-label="Show or hide ceiling">Hide Ceiling</button>
-                <button id="btnDeleteCeiling" class="danger" aria-label="Delete ceiling" style="display:none">Delete Ceiling</button>
-              </div>
-              <div class="form-row">
-                <label for="ceilingManualEntry">Enter Ceiling Manually</label>
-                <input id="ceilingManualEntry" type="checkbox" aria-label="Enter ceiling area manually" />
-              </div>
-              <div class="form-row" id="ceilingManualInputRow" style="display:none">
-                <label for="ceilingManualArea">Ceiling Area</label>
-                <div class="input-with-unit">
-                  <input id="ceilingManualArea" type="number" step="0.0001" min="0" aria-label="Manual ceiling area" />
-                  <span id="ceilingManualAreaUnit" class="unit-suffix">ft²</span>
-                </div>
-              </div>
-            </div>
-            <div class="readonly-list">
-              <div><span class="label">Ceiling Area:</span> <span id="spaceCeilingArea">-</span></div>
-              <div><span class="label">Floor Area:</span> <span id="spaceArea">-</span></div>
-              <div><span class="label">Exterior Perimeter:</span> <span id="spaceExteriorPerim">-</span></div>
             </div>
           </section>
         </div>
